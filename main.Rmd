@@ -1,0 +1,236 @@
+---
+title: "Analizing Protests from 1990 to 2022"
+author: "Angel Feliz"
+date: "`r format(Sys.Date(),'%d %B %Y')`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction
+
+Protests are an important part of society change. In this time we are going to explore data from **The Mass Mobilization Project** which contains information about protests against governments, and contains a variety of variables such as location, dates and number of participants. The data is available in this [link](https://github.com/datacamp/careerhub-data/tree/master/Mass%20Protest%20Data)
+
+This opens the possibility to understand:
+
+- Where do protest occurs?
+- Which kind of people participate in protests?
+- Why do people protest?
+- How do states react to protest?
+
+To answer those questions we will use the next skills:
+
+- Data wrangling with regular expressions (data.table, lubridate, stringr, tm)
+- Missing values exploration (naniar)
+- Data visualization (ggplot2, scales, forcats)
+
+# 1. Data wrangling
+
+## 1.1. Libraries importation 
+
+```{r}
+library(data.table)
+library(lubridate)
+library(stringr)
+library(ggplot2)
+library(scales)
+library(forcats)
+library(naniar)
+source("R/fixed-values.R")
+source("R/functions.R")
+
+`%>%` <- magrittr::`%>%`
+stripWhitespace <- tm::stripWhitespace
+
+theme_set(theme_light())
+```
+
+## 1.2. Data importation and cleanning
+
+In this step we perform the next transformation:
+
+- Expressing character columns without any letter or number with an R **NA value**.
+- Taking out any row that doesn't represent a protest.
+- Saving protests' start and end dates as **Date vectors**.
+- Taking out text variable as **sources** and **notes** as we won't apply text mining techniques to this report.
+- Cleaning **participants** into **participants_clean** to be able to use this quantitative information.
+
+```{r}
+
+protest_data <-
+fread("Raw-data/protest_data.csv"
+  )[, lapply(.SD, add_missing)
+  ][protest == 1
+  ][,`:=`(start_date =  paste(startyear,startmonth,startday,sep = "-") %>% as_date(),
+          end_date =  paste(endyear,endmonth,endday,sep = "-") %>% as_date())
+  ][, !c("startyear","startmonth","startday",
+       "endyear","endmonth","endday",
+       "sources", "notes", "protest","participants_category")
+  ][, participants := str_to_lower(participants) %>% str_remove_all(",") %>% stripWhitespace()
+  ][, c("min","max") := tstrsplit(participants,"-| to ", fixed = FALSE)
+  ][, c("min","max") := lapply(.(min, max), function(x) str_extract(x, "\\d+") %>% as.double())
+  ][, participants_clean := (min+max)/2
+  ][, !c("min","max")
+  ][ participants %like% "^\\d+$" & is.na(participants_clean),
+     participants_clean := participants %>% as.double()
+  ][participants %like% "\\+"& is.na(participants_clean),
+    participants_clean := participants %>% str_remove_all("\\+|[A-Za-z]") %>% as.double()
+  ][participants %like% "\\d+s"& is.na(participants_clean),
+    participants_clean :=  str_match(participants,"(\\d+)s")[,2] %>% as.double()
+  ][participants %like% str_glue("\\d+ ?({words_after_number})") &
+      is.na(participants_clean),
+    participants_clean := str_match(participants,
+       pattern = str_glue("(\\d+) ?({words_after_number})"))[,2] %>% as.double()
+  ][participants %like% "\\d+ ?families" & is.na(participants_clean),
+    participants_clean := str_match(participants, pattern = "(\\d+) ?families")[,2] %>% as.double() * 3
+  ][participants %like% str_glue("({words_before_number}) ?\\d+") & is.na(participants_clean),
+    participants_clean := str_match(participants,
+       pattern = str_glue("({words_before_number}) ?(\\d+)"))[,3] %>% as.double()
+  ][participants %like% "tens of thousand" & is.na(participants_clean),
+    participants_clean := 10000
+  ][participants %like% "hundreds of thousand" & is.na(participants_clean),
+    participants_clean := 100000
+  ][participants %like% "thousand" & is.na(participants_clean),
+    participants_clean := 1000
+  ][participants %like% "million" & is.na(participants_clean),
+    participants_clean := 1e6
+  ][participants %like% "hundred" & is.na(participants_clean),
+    participants_clean := 100
+  ][participants %like% "dozen" & is.na(participants_clean),
+    participants_clean := 12
+  ][, setcolorder(.SD, 
+                  union(c('id', 'country', 'ccode', 'year', 'region', 
+                          'protestnumber','protesterviolence', 'location', 
+                          'participants',"participants_clean"),
+                        names(.SD)))]
+
+```
+## 1.3. Tidying the data
+
+- Reshaping **protester demands** in a single column.
+- Reshaping **state response** in a single column.
+
+```{r}
+protester_demand_tidy <-
+protest_data[, melt(.SD, 
+                    measure.vars = str_subset(names(.SD),"^protesterdemand"),
+                    variable.name = "v_protesterdemand", 
+                    value.name = "protesterdemand")
+  ][, !c("v_protesterdemand")
+  ][, unique(.SD)
+  ][, id_repetitions := .N, id
+  ][ id_repetitions == 1 | !is.na(protesterdemand)
+  ][, !c("id_repetitions",str_c("stateresponse",1:7))]
+
+state_response_tidy <-
+protest_data[, melt(.SD, id.vars = "id",
+                    measure.vars = str_subset(names(.SD),"^stateresponse"),
+                    variable.name = "v_stateresponse", 
+                    value.name = "stateresponse")
+  ][, !c("v_stateresponse")
+  ][, unique(.SD)
+  ][, id_repetitions := .N, id
+  ][ id_repetitions == 1 | !is.na(stateresponse)
+  ][, !c("id_repetitions")]
+
+protest_data_tidy <-
+  merge(protester_demand_tidy, state_response_tidy,
+        by = "id" , all = TRUE)
+
+```
+
+```{r}
+protest_data_tidy[, uniqueN(id)] == protest_data[, uniqueN(id)]
+
+protest_data_tidy %>%
+  vis_miss()
+```
+
+# 3. Explore
+
+## 3.1. Top 10 de años con mas protestas
+
+```{r}
+protest_data[, .N, year
+           ][, year := fct_reorder(as.character(year), N, sum)
+           ][order(-N)
+           ][1:10] %>%
+  ggplot((aes(N, year)))+
+  geom_col(fill = "darkblue", alpha = 0.9)+
+  geom_text(aes(label = comma(N,accuracy = 1)),
+            hjust = -0.8)+
+  labs(title = "Numero de protestas por año")
+
+```
+
+```{r}
+protest_data[, .N, 
+             .(year,region,protesterviolence = as_factor(protesterviolence))] %>%
+  ggplot(aes(year,N, color = protesterviolence, group = protesterviolence))+
+  geom_line(size = 1)+
+  facet_wrap(~region)
+```
+
+# EUR
+
+```{r}
+protest_data[region == "Europe" & year >= 2010
+           ][, .N, .(country, protesterviolence = as_factor(protesterviolence))
+           ][, country := fct_reorder(country, N, sum)
+           ][order(-N)
+           ][1:10] %>%
+  ggplot((aes(N, country, fill = protesterviolence)))+
+  geom_col(position = position_stack())+
+  geom_text(aes(label = comma(N,accuracy = 1)),
+            position = position_stack(vjust = 0.5))
+```
+
+
+```{r}
+
+melt_protest_data <-
+  protest_data[,melt(.SD, 
+                     measure.vars = str_subset(names(.SD), "^protesterdemand"),
+                      variable.name = "v_protesterdemand", value.name = "protesterdemand",
+                     variable.factor = FALSE)
+  ][,melt(.SD, 
+          measure.vars = str_subset(names(.SD), "^stateresponse"),
+          variable.name = "v_stateresponse", value.name = "stateresponse",
+          variable.factor = FALSE)
+  ][, number_protest := .N, id
+  ][!(number_protest > 1 & 
+        is.na(protesterdemand) & 
+        is.na(stateresponse))
+  ][,!c("v_protesterdemand","v_stateresponse")
+  ][, unique(.SD)
+  ][, number_protest := NULL
+  ][, !c("sources","notes")
+  ][, value := 1
+  ][, dcast(.SD,... ~ protesterdemand,
+            value.var = "value", fill = 0)]
+
+str_subset(names(melt_protest_data), "accomodation$")
+str(melt_protest_data)
+```
+
+```{r eval=FALSE, include=FALSE}
+melt_protest_data[
+  ][, .(number_protest2 = uniqueN(id)),
+    .(protesterdemand,stateresponse, protesterviolence = as_factor(protesterviolence))] %>%
+  ggplot(aes(protesterdemand,stateresponse, fill = number_protest2))+
+  geom_tile()+
+  geom_text(aes(label = comma(number_protest2)))+
+  scale_fill_gradient2(low = "blue", high = "red")+
+  facet_wrap(~protesterviolence)+
+  theme_classic()+
+  theme(axis.text.x = element_text(angle = 90))
+
+```
+
+
+
+
+
+
