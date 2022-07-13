@@ -1,14 +1,15 @@
 ---
-title: "Analizing Protests from 1990 to 2022"
+title: "Analizing Protests from 1990 to 2020"
 author: "Angel Feliz"
 date: "`r format(Sys.Date(),'%d %B %Y')`"
 output: 
   html_document:
-    highlight: textmate
+    code_folding: show
+    highlight: tango
     theme: united
     toc: true
     toc_float:
-      collapsed: false
+      collapsed: true
 ---
 
 ```{r setup, include=FALSE}
@@ -17,11 +18,19 @@ knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
 ```
 
 <style>
-h1.title{ font-size: 35px;}
 
-h2.title{font-size: 30px;}
+h1{font-size: 27px; font-weight: bold;}
 
-.my-red {color: red;}
+h1.title{font-size: 30px; font-weight: bold; color: green; }
+
+h2{font-size: 22px; font-weight: bold;}
+
+body{font-size: 15px;}
+code.r{ font-size: 15px; }
+
+.list-group-item.active, .list-group-item.active:focus, .list-group-item.active:hover{background-color: green; }
+
+#rmd-show-all-code:hover, #rmd-hide-all-code:hover {background-color: green; }
 
 </style>
 
@@ -93,7 +102,8 @@ names(old_countries) <-  c("Yugoslavia", "Serbia and Montenegro",
 
 # 2. Data wrangling
 
-In this sections we are going to apply all the changes needed to make easy explore the data in other steps.  
+In this sections we are going to apply all the changes needed to make easy explore the data in other steps. 
+
 
 ## 2.1. Data importation and cleanning
 
@@ -204,10 +214,11 @@ In this step we reshape columns starting with `protesterdemand` or `staterespons
 response_tidy <-
 protest_data[, melt(.SD, 
                     id.vars = "id",
-                    measure.vars = str_subset(names(.SD),"^protesterdemand|^stateresponse"),
+                    measure.vars = str_subset(names(.SD),
+                                              "^protesterdemand|^stateresponse"),
                     value.name = "actions",
                     variable.factor = FALSE)
-  ][!is.na(actions)
+  ][!is.na(actions) & actions %like% "\\w"
   ][, variable := fifelse(variable %like% "^protesterdemand", 
                           "protester_demand","state_response")
   ][, `:=` (happen = TRUE,
@@ -230,7 +241,9 @@ protest_data[, .SD, .SDcols = !patterns("^protesterdemand|^stateresponse")
             by = "id", all = TRUE)
   ][, setcolorder(.SD, setdiff(names(.SD), c("sources","notes")))]
 
-protest_data_tidy[1:6, !c("sources","notes")] |>
+
+protest_data_tidy[id == id[1], !c("sources","notes")
+                ][, id := as.character(id)] |>
   flextable() |>
   theme_vanilla() |>
   autofit()
