@@ -100,6 +100,73 @@ names(old_countries) <-  c("Yugoslavia", "Serbia and Montenegro",
 ```
 
 
+## 1.3. Defining custom functions
+
+In this section we will define some custom functions that will make the come cleaner and easier to change and improve over time:
+
+- **count_category**: It counts the unique number of *id_var* for category included in *group_var* returning a list with a plot and a vector with the levels of the *group_var*.
+
+  - **DATA**:  A data.table with data to count.
+  - **id_var**:  A character value that defines the id column to count the events.
+  - **group_var**:  A character value that defines the column to group by.
+  - **plot_title**:  A character value that defines the plot title.
+  - **plot_max**:  A numeric value that defines the number of categories that will appear in the plot.
+
+```{r}
+
+count_category <- function(DATA,
+                           id_var,
+                           group_var,
+                           plot_title,
+                           plot_max,
+                           plot_fill){
+  
+region_summary <-
+DATA[, setnames(.SD, c(id_var,group_var), c("id","region"))
+  ][, .(number_protest = uniqueN(id)), region
+  ][order(-number_protest)
+  ][, region := as_factor(region)
+  ][, pct := cumsum(number_protest)/sum(number_protest)]
+
+
+if(missing(plot_max) || nrow(region_summary) <= plot_max){
+  plot_data <- region_summary
+}else{
+  plot_data <- region_summary[1:plot_max]
+}
+
+
+if(missing(plot_fill)){
+ base_aes <- 
+   ggplot(plot_data,aes(number_protest, fct_rev(region))) +
+   geom_col(aes(fill = region))
+}else{
+ base_aes <-
+   ggplot(plot_data,aes(number_protest, fct_rev(region))) +
+   geom_col(fill = plot_fill)
+}
+
+plot <-
+ base_aes +
+  geom_text(aes(label = percent(pct, accuracy = 0.1)), hjust = -0.3, size = 6)+
+  geom_blank(aes(x = number_protest *1.08))+
+  scale_x_continuous(labels = comma_format(accuracy = 1))+
+  labs(title = plot_title, x = "", y = "" )+
+  theme(legend.position = "none",
+        plot.title = element_text(color = "black", face = "bold", 
+                                  size = 22, hjust = 0.5),
+        axis.title = element_text(color = "black", face = "bold", size = 18),
+        axis.text = element_text(color = "black", size = 16),
+        strip.text = element_text(face = "bold"),
+        panel.grid.major.y = element_blank())
+
+list("plot" = plot,"levels" = levels(region_summary$region) )
+  
+}
+```
+
+
+
 # 2. Data wrangling
 
 In this sections we are going to apply all the changes needed to make easy explore the data in other steps. 
@@ -239,10 +306,10 @@ protest_data[, .SD, .SDcols = !patterns("^protesterdemand|^stateresponse")
   ][, merge(.SD,
             response_tidy,
             by = "id", all = TRUE)
-  ][, setcolorder(.SD, setdiff(names(.SD), c("sources","notes")))]
+  ][, setcolorder(.SD, setdiff(names(.SD), c("protesteridentity","notes","sources")))]
 
 
-protest_data_tidy[id == id[1], !c("sources","notes")
+protest_data_tidy[id == id[1], !c("protesteridentity","notes","sources")
                 ][, id := as.character(id)] |>
   flextable() |>
   theme_vanilla() |>
@@ -258,35 +325,48 @@ Now we can use the data to answer the questions proposed in the introduction.
 
 ## 3.1. Where do protests occur?
 
+### 3.1.1. Continent level
+
 As our data has **`r length(countries_continent)`** countries it's better to explore the data by continent and then by country as we continue exploring.
 
 ```{r}
 
 continent_summary <-
-protest_data_tidy[, .(number_protest = uniqueN(id)),
-                  .(continent)
-  ][order(-number_protest)
-  ][, continent := as_factor(continent)
-  ][, pct := cumsum(number_protest)/sum(number_protest)]
+count_category(protest_data_tidy,
+               id_var = "id",
+               group_var = "continent",
+               plot_title = "Number of Protests per Continent")
 
-continent_levels <-levels(continent_summary$continent)
-
-ggplot(continent_summary,aes(number_protest, fct_rev(continent), fill = continent))+
-  geom_col()+
-  geom_text(aes(label = percent(pct, accuracy = 0.1)), hjust = -0.3)+
-  geom_blank(aes(x = number_protest *1.15))+
-  scale_x_continuous(labels = comma_format(accuracy = 1))+
-  labs(title = "Number of Protests per Continent",
-       x = "Number of Protests", y = "Continent" )+
-  theme(legend.position = "none",
-        plot.title = element_text(color = "black",
-                                  face = "bold"),
-        strip.text = element_text(face = "bold"),
-        panel.grid.major.y = element_blank())
+continent_summary$plot
 
 ```
 
-As we can see in the chart most of the protests occurs in **`r continent_summary[, continent][1]`** and  **`r continent_summary[, continent][2]`**.
+```{r eval=FALSE, include=FALSE}
+count_category(protest_data_tidy[variable == "protester_demand" &
+                                   happen == TRUE &
+                                   continent == "Asia"],
+               id_var = "id",
+               group_var = "actions",
+               plot_title = "Number of Protests per Continent",
+               plot_fill = "forestgreen")
+
+count_category(protest_data_tidy[variable == "state_response" & 
+                                   happen == TRUE &
+                                   continent == "Americas"],
+               id_var = "id",
+               group_var = "actions",
+               plot_title = "Number of Protests per Continent",
+               plot_fill = "forestgreen")
+
+count_category(protest_data_tidy[continent == "Europe"],
+               id_var = "id",
+               group_var = "country",
+               plot_title = "Number of Protests per European Country",
+               plot_fill = "forestgreen")
+```
+
+
+As we can see in the chart most of the protests occurs in **`r continent_summary$levels[1]`** and  **`r continent_summary$levels[2]`**.
 
 As this data have information of protests between *`r protest_data_tidy[, min(year)]`* and *`r protest_data_tidy[, max(year)]`* let's see how the number of protests change each year for each continent.
 
@@ -295,7 +375,7 @@ As this data have information of protests between *`r protest_data_tidy[, min(ye
 continent_count_year_plot <-
 protest_data_tidy[, .(number_protest = uniqueN(id)),
                   .(continent = factor(continent, 
-                                       levels = continent_levels),
+                                       levels = continent_summary$levels),
                     year)] |>
   SharedData$new(key = ~continent, group = "Select a continent") |>
   ggplot(aes(year, number_protest, color = continent))+
@@ -313,7 +393,7 @@ protest_data_tidy[, .(number_protest = uniqueN(id)),
 
 ```
 
-At first view, we can see that *2020* isn't a normal year as countries have less protests that year than any other year in the past. That abnormality makes sense when we check that he last date in data is <span style="color:red">  ***`r protest_data_tidy[,max(c(start_date,end_date))] |> format("%m/%d/%y")`***</span>.
+At first view, we can see that *2020* isn't a normal year as countries have less protests that year than any other year in the past. That abnormality makes sense when we check that he last date in data is ***`r protest_data_tidy[,max(c(start_date,end_date))] |> format("%m/%d/%y")`***.
 
 Checking each individual Continent by clicking over each one we can see:
 
@@ -327,4 +407,38 @@ Checking each individual Continent by clicking over each one we can see:
 
 - **Oceania:** It just have two picks of 5 protest in **2001** and **2005**.
 
+### 3.1.2. Europe countries
+
+```{r}
+europe_summary <-
+protest_data_tidy[continent == "Europe", 
+                  .(number_protest = uniqueN(id)),
+                  .(country)
+  ][order(-number_protest)
+  ][, country := as_factor(country)
+  ][, pct := cumsum(number_protest)/sum(number_protest)]
+
+
+# This vector will help me to use the same color for each continent
+# in the whole project
+europe_levels <-levels(europe_summary$country)
+
+
+ggplot(europe_summary[1:15],
+       aes(number_protest, fct_rev(country), fill = country))+
+  geom_col()+
+  geom_text(aes(label = percent(pct, accuracy = 0.1)), hjust = -0.3, size = 6)+
+  geom_blank(aes(x = number_protest *1.08))+
+  scale_x_continuous(labels = comma_format(accuracy = 1))+
+  labs(title = "Number of Protests per Continent", x = "", y = "" )+
+  theme(legend.position = "none",
+        plot.title = element_text(color = "black", face = "bold", 
+                                  size = 22, hjust = 0.5),
+        axis.title = element_text(color = "black", face = "bold", size = 18),
+        axis.text = element_text(color = "black", size = 16),
+        strip.text = element_text(face = "bold"),
+        panel.grid.major.y = element_blank())
+
+
+```
 
