@@ -32,18 +32,19 @@ This data opens the possibility to understand:
 1. Where do protest occurs?
 2. Why do people protest?
 3. How do states react to protest?
-4. Which kind of people participate in protests?
+4. What does characterize an protest? (number of demands)
+5. Which kind of people participate in protests?
 
 To answer those questions we will perform an **Exploratory Data Analysis (EDA)** applying the next skills:
 
-- R (functional) programming with ***base R***
-- Data Manipulation with ***data.table***
-- Date manipulation with ***lubridate***
-- String manipulation with ***stringr***
-- Data visualization with ***ggplot2***, ***scales*** and ***forcats***
-- Interactive data visualization with ***plotly*** and ***crosstalk***
-- Automated reporting with ***rmarkdown***, ***flextable***, ***html*** and ***css***
-- Text mining with ***tidytext***
+- R (functional) programming with **base R**
+- Data Manipulation with **data.table** (much faster than dplyr of tidyverse)
+- Date manipulation with **lubridate** part of tidyverse
+- String manipulation with **stringr** part of tidyverse
+- Data visualization with **ggplot2**, **scales** and **forcats** parts of tidyverse
+- Interactive data visualization with **plotly** and **crosstalk**
+- Automated reporting with **rmarkdown**, **flextable**, **html** and **css**
+- Text mining with **tidytext**
 
 
 ```{r initial-set-up, class.source = 'fold-hide'}
@@ -167,12 +168,12 @@ Before being able to explore the data it's important to face some problems with 
   </tr>
   <tr>
     <td>02</td> 
-    <td>Days, months and years were stored in individual columns to define protest start and end date.</td> 
+    <td>Days, months and years were stored in individual columns to define protest start and end dates.</td> 
     <td>We created a Date variable to define the protest start and end dates.</td> 
   </tr>
   <tr>
     <td>03</td> 
-    <td>`participants_category` column has a good number of categories but have many missing values and `participants` mixes value with words</td> 
+    <td>`participants_category` column has a good number of categories but it has many missing values and `participants` mixes value with words</td> 
     <td>We cleaned `participants` and then complete the `participants_category` with that information.</td> 
    </tr>
     <tr>
