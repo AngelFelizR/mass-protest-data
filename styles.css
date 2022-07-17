@@ -66,6 +66,7 @@ a{
 .wrangling-table th,
 .wrangling-table td{
  padding: 12px 15px ;
+ font-size: 15px;
 }
 .wrangling-table tbody tr{
   border-bottom: 1px solid #dddddd;

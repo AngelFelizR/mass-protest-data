@@ -18,11 +18,6 @@ knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
                       fig.align = "center", fig.dim = c(12,8))
 ```
 
-<style>
-
-
-</style>
-
 # Introduction
 
 Protests are an important part of society change. In this post we are going to explore data from **The Mass Mobilization Project** which contains information about protests against governments, and contains a variety of variables such as location, dates and number of participants. The data was obtained by this [link](https://github.com/datacamp/careerhub-data/tree/master/Mass%20Protest%20Data)
@@ -32,13 +27,14 @@ This data opens the possibility to understand:
 1. Where do protest occurs?
 2. Why do people protest?
 3. How do states react to protest?
-4. What does characterize an protest? (number of demands)
-5. Which kind of people participate in protests?
+4. Does a good state response increase the number protests?
+5. What does characterize an protest? (number of demands)
+6. Which kind of people participate in protests?
 
 To answer those questions we will perform an **Exploratory Data Analysis (EDA)** applying the next skills:
 
 - R (functional) programming with **base R**
-- Data Manipulation with **data.table** (much faster than dplyr of tidyverse)
+- Data manipulation with **data.table** (much faster than dplyr of tidyverse)
 - Date manipulation with **lubridate** part of tidyverse
 - String manipulation with **stringr** part of tidyverse
 - Data visualization with **ggplot2**, **scales** and **forcats** parts of tidyverse
@@ -64,7 +60,7 @@ library(crosstalk)
 theme_set(theme_light())
 
 
-# Vectors to clean data
+# Vectors to extract the number of participants
 words_after_number <- 
 str_c(c("people","protesters","drivers","residents","supporters",
         "members","participants","former","demonstrators"),
@@ -74,6 +70,7 @@ words_before_number <-
 str_c(c("about","around","more than",">","<","almost","over","more than"),
       collapse = "|")
 
+# Vector to complete continent column
 old_countries_EUR <-  
 c("Yugoslavia", "Serbia and Montenegro",
   "Kosovo","Germany East","Czechoslovakia")
@@ -82,73 +79,121 @@ c("Yugoslavia", "Serbia and Montenegro",
 # Custom functions
 
 #  count_category
-#   It counts the unique number of id_var for category included in group_var
-#   returning a list with a plot and a vector with the levels of the group_var.
+#   It counts the unique number of id_var for categories included in group_var
+#   and plot_fill_var a col plot.
 #   
 #   Arguments
 #    DATA: A data.table with data to count.
 #    id_var: A character value that defines the id column to count the events.
 #    group_var: A character value that defines the column to group by.
+#    plot_fill_var: A character value that defines the column to group by
+#                   and fill the plot.
+#    plot_fill: A character value with constant color to fill all bars.
 #    plot_title: A character value that defines the plot title.
 #    plot_max: A numeric value that defines the number of categories 
 #              that will appear in the plot.
 
+
+
 count_category <- function(DATA,
                            id_var,
                            group_var,
+                           plot_fill_var,
+                           plot_fill,
                            plot_title,
                            plot_max,
-                           plot_fill){
+                           pct_cumsum = TRUE){
   
+  if(missing(plot_fill_var)){
+    group_vector <- "group"
+  }else{
+    group_vector <- c("group",plot_fill_var)
+  }
   
-region_summary <-
- DATA[, setnames(.SD, c(id_var,group_var), c("id","region"))
-  ][, .(number_protest = uniqueN(id)), region
+data_summary <-
+ DATA[, setnames(.SD, c(id_var,group_var), c("id","group"))
+  ][, .(number_protest = uniqueN(id)), group_vector
   ][order(-number_protest)
-  ][, region := as_factor(region)
-  ][, pct := cumsum(number_protest)/sum(number_protest)]
+  ][, group := as_factor(group)
+  ][, pct := fifelse(rep(pct_cumsum, .N), 
+                     cumsum(number_protest),
+                     number_protest)
+             /
+             sum(number_protest)]
 
 
-if(missing(plot_max) || nrow(region_summary) <= plot_max){
-  plot_data <- region_summary
+if(missing(plot_max) || nrow(data_summary) <= plot_max){
+  plot_data <- data_summary
 }else{
-  plot_data <- region_summary[1:plot_max]
+  plot_data <- data_summary[1:plot_max]
 }
 
 
-if(missing(plot_fill)){
+if(missing(plot_fill_var) & missing(plot_fill)){
  base_aes <- 
-   ggplot(plot_data,aes(number_protest, fct_rev(region))) +
-   geom_col(aes(fill = region))
-}else{
- base_aes <-
-   ggplot(plot_data,aes(number_protest, fct_rev(region))) +
+   ggplot(plot_data,aes(number_protest, fct_rev(group))) +
+   geom_col(aes(fill = group))
+ 
+ fill_title <- str_to_sentence(group_var)
+ 
+}else if(!missing(plot_fill)){
+base_aes <-
+   ggplot(plot_data,aes(number_protest, fct_rev(group))) +
    geom_col(fill = plot_fill)
+
+fill_title <- ""
+
+}else{
+ plot_data[, plot_fill_var := get(plot_fill_var)]
+ base_aes <-
+   ggplot(plot_data,aes(number_protest, fct_rev(group))) +
+   geom_col(aes(fill = plot_fill_var))
+ 
+ fill_title <-str_to_sentence(plot_fill_var)
+ 
 }
 
-
-plot <-
  base_aes +
   geom_text(aes(label = percent(pct, accuracy = 0.1)), hjust = -0.3, size = 6)+
   geom_blank(aes(x = number_protest *1.08))+
   scale_x_continuous(labels = comma_format(accuracy = 1))+
-  labs(title = plot_title, x = "", y = "" )+
-  theme(legend.position = "none",
-        plot.title = element_text(color = "black", face = "bold", 
+  labs(title = plot_title, x = "", y = "", fill = fill_title)+
+  theme(plot.title = element_text(color = "black", face = "bold", 
                                   size = 22, hjust = 0.5),
+        legend.position = "top",
+        legend.title = element_text(color = "black",size = 16),
+        legend.text = element_text(color = "black",size = 14),
         axis.title = element_text(color = "black", face = "bold", size = 18),
         axis.text = element_text(color = "black", size = 16),
-        strip.text = element_text(face = "bold"),
+        strip.text = element_text(face = "bold",size = 14),
         panel.grid.major.y = element_blank())
+  
+}
 
-list("plot" = plot,"levels" = levels(region_summary$region) )
+
+#  style_as_ft
+#   Takes a data.frame and returns a html table with a style acording to the report.
+#   
+#   Arguments
+#    DATA: A data.frame with information to show.
+
+style_as_ft <- function(DATA){
+  
+  flextable(DATA) |>
+  border_remove() |>
+  bg(bg = "#008000", part = "header") |>
+  bold(part = "header") |>
+  color(color = "white", part = "header") |>
+  border_inner_h(border = officer::fp_border(color = "#dddddd")) |>
+  bg(i = (1:nrow(DATA))[1:nrow(DATA) %% 2 == 0], bg = "#f3f3f3") |>
+  autofit()
   
 }
 
 ```
 
 
-# 2. Data wrangling
+# 1. Data wrangling
 
 Before being able to explore the data it's important to face some problems with the data. The next table summarizes the problems founds in the data and the problems to solve each problem:
 
@@ -185,12 +230,17 @@ Before being able to explore the data it's important to face some problems with 
   </tbody>
 </table>
 
+Below we can see a protest `id` as an example of the changes made. That table has the next characteristics:
 
-```{r}
+1. Most of the protests have a `participants_range` category.
+2. All protests have a`start_date` and an `end_date` in a Date format.
+3. Every protest has a row for every possible action that could occur during the protest ether made by protesters or the state and the last column confirms whether the action took place or not.
+
+```{r data-wrangling, class.source = 'fold-hide'}
 
 protest_data <-
   
-  # Importing protest_data.csv in to R and 
+# Importing protest_data.csv in to R and 
 fread("Raw-data/protest_data.csv", na.strings = "", integer64 = "double"
   )[protest == 1
     
@@ -247,23 +297,23 @@ fread("Raw-data/protest_data.csv", na.strings = "", integer64 = "double"
              default = "Missing")
   ][is.na(participants_category), participants_category :=  participants_category_clean
   ][participants_category == "50-99", participants_category := "1-99"
-  ][, participants_category := factor(participants_category,
-                                      levels = c("Missing","1-99", "100-999", 
-                                                 "1000-1999",  "2000-4999", 
-                                                 "5000-10000",">10000"))
+  ][, participants_range := factor(participants_category,
+                                    levels = c("Missing","1-99", "100-999",
+                                               "1000-1999",  "2000-4999", 
+                                               "5000-10000",">10000"))
     
     
   # Taking out unnecessary columns
-  ][, !c("participants","participants_clean","participants_category_clean",'region',
-         "startyear","startmonth","startday","endyear","endmonth","endday", "protest",
-         "min","max")
+  ][, !c("participants","participants_clean","participants_category_clean",
+         "participants_category",'region',"startyear","startmonth","startday",
+         "endyear","endmonth","endday", "protest","min","max")
     
     
   # Setting the col order for data.frame
   ][, setcolorder(.SD, 
                   union(c('id', 'country', 'ccode', 'year', "continent",
                           'protestnumber','protesterviolence', 'location', 
-                          "participants_category","start_date","end_date"),
+                          "participants_range","start_date","end_date"),
                         names(.SD)))]
 
 
@@ -278,7 +328,7 @@ protest_data[, melt(.SD,
   ][!is.na(actions) & actions %like% "\\w"
   ][, variable := fifelse(variable %like% "^protesterdemand", 
                           "protester_demand","state_response")
-  ][, `:=` (happen = TRUE,
+  ][, `:=` (action_occur = TRUE,
             actions = str_c(variable," - ",actions))
   ][, !c("variable")
   ][, unique(.SD)
@@ -286,9 +336,9 @@ protest_data[, melt(.SD,
             CJ(id = unique(protest_data$id),
                actions = unique(actions)),
             by = c("id", "actions"), all = TRUE)
-  ][is.na(happen), happen := FALSE
-  ][, c("variable", "actions") := tstrsplit(actions, split = " - ", fixed = TRUE)
-  ][,c("id","variable","actions","happen")]
+  ][is.na(action_occur), action_occur := FALSE
+  ][, c("action_source", "actions") := tstrsplit(actions, split = " - ", fixed = TRUE)
+  ][,c("id","action_source","actions","action_occur")]
 
 
 # Joining protester demands and state responses in a longer format
@@ -297,50 +347,56 @@ protest_data[, .SD, .SDcols = !patterns("^protesterdemand|^stateresponse")
   ][, merge(.SD,
             response_tidy,
             by = "id", all = TRUE)
-  ][, setcolorder(.SD, setdiff(names(.SD), c("protesteridentity","notes","sources")))]
+  ][, setcolorder(.SD, setdiff(names(.SD), 
+                               c("protesteridentity","notes","sources")))
+  #Making continent a factor to keep constant the color in plots
+  ][, continent := fct_reorder(continent, id, .fun = uniqueN, .desc = TRUE)]
 
 
 # Show final table
 protest_data_tidy[id == id[1], 
-                  !c("protestnumber", "protesterviolence","location","continent",
-                     "year","ccode","protesteridentity","notes","sources")
+                  c('id', 'country', 'participants_range', 'start_date', 
+                    'end_date', 'action_source', 'actions', 'action_occur')
   ][, id := as.character(id)] |>
-  flextable() |>
-  theme_vanilla() |>
-  autofit()
+  style_as_ft()
+
 ```
 
+# 2. Data exploration
 
-# 3. Data exploration
-
-Now we can use the data to answer the questions proposed in the introduction.
-
+Now that we have a clean and tidy data we can start to answer interesting questions with the data by using data visualization techniques.
 
 ## 3.1. Where do protests occur?
 
-### 3.1.1. Continent level
 
-As our data has **`r uniqueN(protest_data_tidy$country)`** countries it's better to explore the data by continent and then by country as we continue exploring.
+```{r, fig.dim = c(12,12)}
 
-```{r}
-
-continent_summary <-
-count_category(protest_data_tidy,
+count_category(DATA = protest_data_tidy,
                id_var = "id",
-               group_var = "continent",
-               plot_title = "Number of Protests per Continent")
+               group_var = "country",
+               plot_fill_var = "continent",
+               plot_title = "Total of protests per country",
+               plot_max = 40)
+```
 
 
-#Saving the levels in our data to keep the same colors for each continent
-protest_data_tidy[, continent := factor(continent,
-                                        levels = continent_summary$levels)]
+```{r, fig.dim = c(14,10)}
 
-continent_summary$plot
+count_category(DATA = protest_data_tidy,
+               id_var = "id",
+               group_var = "country",
+               plot_fill_var = "continent",
+               plot_title = "Total of protests per country",
+               plot_max = 40,
+               pct_cumsum = FALSE)+
+  labs(subtitle = " ")+
+  facet_wrap(~continent, scales = "free_y")+
+  theme(legend.position = "none")
 
 ```
 
 
-As we can see in the chart most of the protests occurs in **`r continent_summary$levels[1]`** and  **`r continent_summary$levels[2]`**.
+As we can see in the chart most of the protests occurs in **`r levels(protest_data_tidy$continent)[1]`** and  **`r levels(protest_data_tidy$continent)[2]`**.
 
 As this data have information of protests between *`r protest_data_tidy[, min(year)]`* and *`r protest_data_tidy[, max(year)]`* let's see how the number of protests change each year for each continent.
 
@@ -379,27 +435,34 @@ Checking each individual Continent by clicking over each one we can see:
 
 - **Oceania:** It just have two picks of 5 protest in **2001** and **2005**.
 
+```{r, fig.align='center', fig.dim = c(10,6)}
 
-```{r eval=FALSE, include=FALSE}
-count_category(protest_data_tidy[variable == "protester_demand" &
-                                   happen == TRUE &
-                                   continent == "Asia"],
-               id_var = "id",
-               group_var = "actions",
-               plot_title = "Number of Protests per Continent",
-               plot_fill = "forestgreen")
+protest_data_tidy[continent == "Europe", 
+                  .(number_protest = uniqueN(id)),
+                  .( country, year)] |>
+  ggplot(aes(number_protest))+
+  geom_histogram(bins = 20)+
+  scale_x_log10(breaks = 2^(1:7) |> round())
 
-count_category(protest_data_tidy[variable == "state_response" & 
-                                   happen == TRUE &
-                                   continent == "Americas"],
-               id_var = "id",
-               group_var = "actions",
-               plot_title = "Number of Protests per Continent",
-               plot_fill = "forestgreen")
 
-count_category(protest_data_tidy[continent == "Europe"],
-               id_var = "id",
-               group_var = "country",
-               plot_title = "Number of Protests per European Country",
-               plot_fill = "forestgreen")
+EUR_count_year_plot <-
+protest_data_tidy[continent == "Europe", 
+                  .(number_protest = uniqueN(id)),
+                  .( country, year)
+  ][, number_protest_max := max(number_protest), country
+  ][number_protest_max >= 30] |>
+  SharedData$new(key = ~country, group = "Select a continent") |>
+  ggplot(aes(year, number_protest, color = country))+
+  geom_line(size = 1)+
+  geom_point(size = 2)+
+  scale_y_continuous(breaks = breaks_width(10))+
+  scale_x_continuous(breaks = breaks_width(2))+
+  labs(title = "Number of Protests per Country and Year",
+       x = "Year", y = "Number of Protests", color = "Continent")+
+  theme(plot.title = element_text(color = "black", face = "bold"))
+
+  ggplotly(EUR_count_year_plot) |>
+    highlight(on = 'plotly_click',
+              off = 'plotly_doubleclick')
+
 ```
