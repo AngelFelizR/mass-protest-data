@@ -45,7 +45,7 @@ To answer those questions we will perform an **Exploratory Data Analysis (EDA)**
 
 ```{r initial-set-up, class.source = 'fold-hide'}
 
-# Libraries importation
+# 1. Libraries importation
 library(data.table)
 library(lubridate)
 library(stringr)
@@ -56,138 +56,130 @@ library(scales)
 library(forcats)
 library(plotly)
 library(crosstalk)
-
 theme_set(theme_light())
 
 
-# Vectors to extract the number of participants
-words_after_number <- 
-str_c(c("people","protesters","drivers","residents","supporters",
-        "members","participants","former","demonstrators"),
-      collapse = "|")
+# 2. Custom vectors
 
-words_before_number <-
-str_c(c("about","around","more than",">","<","almost","over","more than"),
-      collapse = "|")
-
-# Vector to complete continent column
-old_countries_EUR <-  
+EuropeMissingCountries <-  
 c("Yugoslavia", "Serbia and Montenegro",
   "Kosovo","Germany East","Czechoslovakia")
 
 
-# Custom functions
+# Next variables help to extract the number of 
+# participants from participants columns.
 
-#  count_category
-#   It counts the unique number of id_var for categories included in group_var
-#   and plot_fill_var a col plot.
+KeyWordsAfterNumber <- 
+str_c(c("people","protesters","drivers","residents","supporters",
+        "members","participants","former","demonstrators"),
+      collapse = "|")
+
+KeyWordsBeforeNumber <-
+str_c(c("about","around","more than",">","<","almost","over","more than"),
+      collapse = "|")
+
+
+# 3. Custom function
+
+# plot_chr_count
+# It counts the unique number of id_var for categories included in group_var
+# and plot_fill_var a col plot.
 #   
-#   Arguments
-#    DATA: A data.table with data to count.
-#    id_var: A character value that defines the id column to count the events.
-#    group_var: A character value that defines the column to group by.
-#    plot_fill_var: A character value that defines the column to group by
-#                   and fill the plot.
-#    plot_fill: A character value with constant color to fill all bars.
-#    plot_title: A character value that defines the plot title.
-#    plot_max: A numeric value that defines the number of categories 
-#              that will appear in the plot.
+#  Arguments
+#  DATA: A data.table with data to count.
+#  id_var: A character value that defines the id column to count the events.
+#  group_var: A character value that defines the column to group by.
+#  plot_fill_var: A character value that defines the column to group by
+#                 and fill the plot.
+#  plot_fill: A character value with constant color to fill all bars.
+#  plot_title: A character value that defines the plot title.
+#  plot_max: A numeric value that defines the number of categories 
+#            that will appear in the plot.
+#  use_cumulative_sum: A boolean value to perform a cumulative sum of percentages.
 
-
-
-count_category <- function(DATA,
+plot_chr_count <- function(DATA,
                            id_var,
                            group_var,
                            plot_fill_var,
                            plot_fill,
                            plot_title,
                            plot_max,
-                           pct_cumsum = TRUE){
+                           use_cumulative_sum = TRUE){
   
-  if(missing(plot_fill_var)){
-    group_vector <- "group"
-  }else{
+  
+  # To be able to color bar according to an extra variable it's needed
+  # that all the data to be summarize by the color variable.
+  
+  if(!missing(plot_fill_var)){
     group_vector <- c("group",plot_fill_var)
+  }else{
+    group_vector <- "group"
   }
   
-data_summary <-
- DATA[, setnames(.SD, c(id_var,group_var), c("id","group"))
-  ][, .(number_protest = uniqueN(id)), group_vector
-  ][order(-number_protest)
-  ][, group := as_factor(group)
-  ][, pct := fifelse(rep(pct_cumsum, .N), 
-                     cumsum(number_protest),
-                     number_protest)
-             /
-             sum(number_protest)]
-
-
-if(missing(plot_max) || nrow(data_summary) <= plot_max){
-  plot_data <- data_summary
-}else{
-  plot_data <- data_summary[1:plot_max]
-}
-
-
-if(missing(plot_fill_var) & missing(plot_fill)){
- base_aes <- 
-   ggplot(plot_data,aes(number_protest, fct_rev(group))) +
-   geom_col(aes(fill = group))
- 
- fill_title <- str_to_sentence(group_var)
- 
-}else if(!missing(plot_fill)){
-base_aes <-
-   ggplot(plot_data,aes(number_protest, fct_rev(group))) +
-   geom_col(fill = plot_fill)
-
-fill_title <- ""
-
-}else{
- plot_data[, plot_fill_var := get(plot_fill_var)]
- base_aes <-
-   ggplot(plot_data,aes(number_protest, fct_rev(group))) +
-   geom_col(aes(fill = plot_fill_var))
- 
- fill_title <-str_to_sentence(plot_fill_var)
- 
-}
-
- base_aes +
-  geom_text(aes(label = percent(pct, accuracy = 0.1)), hjust = -0.3, size = 6)+
-  geom_blank(aes(x = number_protest *1.08))+
-  scale_x_continuous(labels = comma_format(accuracy = 1))+
-  labs(title = plot_title, x = "", y = "", fill = fill_title)+
-  theme(plot.title = element_text(color = "black", face = "bold", 
-                                  size = 22, hjust = 0.5),
-        legend.position = "top",
-        legend.title = element_text(color = "black",size = 16),
-        legend.text = element_text(color = "black",size = 14),
-        axis.title = element_text(color = "black", face = "bold", size = 18),
-        axis.text = element_text(color = "black", size = 16),
-        strip.text = element_text(face = "bold",size = 14),
-        panel.grid.major.y = element_blank())
   
-}
-
-
-#  style_as_ft
-#   Takes a data.frame and returns a html table with a style acording to the report.
-#   
-#   Arguments
-#    DATA: A data.frame with information to show.
-
-style_as_ft <- function(DATA){
+  data_summary <-
+    DATA[, setnames(.SD, c(id_var,group_var), c("id","group"))
+    ][, .(number_protest = uniqueN(id)), group_vector
+    ][order(-number_protest)
+    ][, group := as_factor(group)
+    ][, pct := fifelse(rep(use_cumulative_sum, .N), 
+                       cumsum(number_protest), number_protest) /
+               sum(number_protest)]
   
-  flextable(DATA) |>
-  border_remove() |>
-  bg(bg = "#008000", part = "header") |>
-  bold(part = "header") |>
-  color(color = "white", part = "header") |>
-  border_inner_h(border = officer::fp_border(color = "#dddddd")) |>
-  bg(i = (1:nrow(DATA))[1:nrow(DATA) %% 2 == 0], bg = "#f3f3f3") |>
-  autofit()
   
+  # Filtering top categories
+  
+  if(!missing(plot_max) && !nrow(data_summary) <= plot_max){
+    data_summary <- data_summary[1:plot_max]
+  }
+  
+  
+  # Defining data plot and plot title 
+  
+  if(missing(plot_fill_var) & missing(plot_fill)){
+    
+    base_aes <- 
+      ggplot(data_summary,aes(number_protest, fct_rev(group))) +
+      geom_col(aes(fill = group))
+    
+    fill_title <- str_to_sentence(group_var)
+    
+  }else if(!missing(plot_fill)){
+    
+    base_aes <-
+      ggplot(data_summary,aes(number_protest, fct_rev(group))) +
+      geom_col(fill = plot_fill)
+    
+    fill_title <- ""
+    
+  }else{
+    
+    data_summary[, plot_fill_var := get(plot_fill_var)]
+    base_aes <-
+      ggplot(data_summary,aes(number_protest, fct_rev(group))) +
+      geom_col(aes(fill = plot_fill_var))
+    
+    fill_title <-str_to_sentence(plot_fill_var)
+    
+  }
+  
+  
+  # Applying theme customization
+  
+  base_aes +
+    geom_text(aes(label = percent(pct, accuracy = 0.1)), hjust = -0.3, size = 6)+
+    geom_blank(aes(x = number_protest *1.08))+
+    scale_x_continuous(labels = comma_format(accuracy = 1))+
+    labs(title = plot_title, x = "", y = "", fill = fill_title)+
+    theme(plot.title = element_text(color = "black", face = "bold", 
+                                    size = 22, hjust = 0.5),
+          legend.position = "top",
+          legend.title = element_text(color = "black",size = 16),
+          legend.text = element_text(color = "black",size = 14),
+          axis.title = element_text(color = "black", face = "bold", size = 18),
+          axis.text = element_text(color = "black", size = 16),
+          strip.text = element_text(face = "bold",size = 14),
+          panel.grid.major.y = element_blank())
 }
 
 ```
@@ -214,16 +206,16 @@ Before being able to explore the data it's important to face some problems with 
   <tr>
     <td>02</td> 
     <td>Days, months and years were stored in individual columns to define protest start and end dates.</td> 
-    <td>We created a Date variable to define the protest start and end dates.</td> 
+    <td>We created Date variables to define the protest start and end dates.</td> 
   </tr>
   <tr>
     <td>03</td> 
-    <td>`participants_category` column has a good number of categories but it has many missing values and `participants` mixes value with words</td> 
+    <td>`participants_category` column has a small number of categories but it has many missing values and `participants` mixes value with words</td> 
     <td>We cleaned `participants` and then complete the `participants_category` with that information.</td> 
    </tr>
     <tr>
     <td>04</td> 
-    <td>Protester demands and state responses were stored in many columns as one protest can have many values</td> 
+    <td>Protester demands and state responses were stored in many columns as one protest can have many values in both situation</td> 
     <td>We reshape the data to have longer table where protester demands and state responses are saved in 3 columns without missing values.</td> 
    </tr>
    
@@ -238,55 +230,62 @@ Below we can see a protest `id` as an example of the changes made. That table ha
 
 ```{r data-wrangling, class.source = 'fold-hide'}
 
-protest_data <-
-  
-# Importing protest_data.csv in to R and 
-fread("Raw-data/protest_data.csv", na.strings = "", integer64 = "double"
+# Data importation and cleaning states
+
+ProtestClean <-
+  fread("Raw-data/protest_data.csv", na.strings = "", integer64 = "double"
   )[protest == 1
-    
-    
-  # protest start and end dates as Date variables
   ][,`:=`(start_date =  paste(startyear,startmonth,startday,sep = "-") |> as_date(),
-          end_date =  paste(endyear,endmonth,endday,sep = "-") |> as_date())
+          end_date =  paste(endyear,endmonth,endday,sep = "-") |> as_date(),
+          participants = participants |>  str_to_lower() |> 
+            str_remove_all(",") |>
+            str_replace_all(" +"," "))
     
     
-  # Adding continent based on countries names
-  ][!country %chin% old_countries_EUR, 
+  # Adding continents based on countries names
+  
+  ][!country %chin% EuropeMissingCountries, 
     continent := countrycode(country, 
                              origin = "country.name",
                              destination = "continent")
-  ][country %chin% old_countries_EUR, continent := "Europe"
+  ][country %chin% EuropeMissingCountries, continent := "Europe"
   
     
-  # Completing the participants_category columns based on participants column
-  ][, participants := str_to_lower(participants) |> 
-      str_remove_all(",") |>
-      str_replace_all(" +"," ")
+  # Extracting values from participants column
+  
   ][, c("min","max") := tstrsplit(participants,"-| to ", fixed = FALSE)
   ][participants %like% "between \\d+ and \\d+", 
     `:=`(min = str_match(participants, "between (\\d+) and \\d+")[,2],
          max = str_match(participants, "between \\d+ and (\\d+)")[,2])
-  ][, c("min","max") := lapply(.(min, max), function(x) str_extract(x, "\\d+") |> 
-                                 as.double())
+  ][, c("min","max") := lapply(.(min, max), 
+                               function(x) str_extract(x, "\\d+") |> as.double())
   ][, participants_clean := (min+max)/2
   ][ participants %like% "^\\d+$" & is.na(participants_clean),
-     participants_clean := participants |> as.double()
+     participants_clean :=  as.double(participants)
   ][participants %like% "\\+"& is.na(participants_clean),
-    participants_clean := participants |> str_remove_all("\\+|[A-Za-z]") |> 
-      as.double()
+    participants_clean := str_remove_all(participants,"\\+|[A-Za-z]") |> as.double()
   ][participants %like% "\\d+s"& is.na(participants_clean),
-    participants_clean :=  str_match(participants,"(\\d+)s")[,2] |> 
-      as.double()
-  ][participants %like% str_glue("\\d+ ?({words_after_number})") &
+    participants_clean :=  str_match(participants,"(\\d+)s")[,2] |>  as.double()
+  ][participants %like% str_glue("\\d+ ?({KeyWordsAfterNumber})") & 
       is.na(participants_clean),
     participants_clean := str_match(participants,
-       pattern = str_glue("(\\d+) ?({words_after_number})"))[,2] |> as.double()
-  ][participants %like% str_glue("({words_before_number}) ?\\d+") &
+                                    str_glue("(\\d+) ?({KeyWordsAfterNumber})"))[,2] |>
+                          as.double()
+  ][participants %like% str_glue("({KeyWordsBeforeNumber}) ?\\d+") &
       is.na(participants_clean),
     participants_clean := str_match(participants,
-       pattern = str_glue("({words_before_number}) ?(\\d+)"))[,3] |> as.double()
+                                    str_glue("({KeyWordsBeforeNumber}) ?(\\d+)"))[,3] |> 
+                          as.double()
+  
+    
+  # Adding after reading the description
+  
   ][id == 922006004, participants_clean := 50
   ][id == 6602002005, participants_clean := 2000
+    
+  
+  # Adding the Number of participants by range category
+  
   ][, participants_category_clean := 
       fcase( between(participants_clean, 1, 99), "1-99",
              between(participants_clean, 100, 999), "100-999",
@@ -303,13 +302,11 @@ fread("Raw-data/protest_data.csv", na.strings = "", integer64 = "double"
                                                "5000-10000",">10000"))
     
     
-  # Taking out unnecessary columns
+  # Keeping and organizing columns' order
+  
   ][, !c("participants","participants_clean","participants_category_clean",
          "participants_category",'region',"startyear","startmonth","startday",
          "endyear","endmonth","endday", "protest","min","max")
-    
-    
-  # Setting the col order for data.frame
   ][, setcolorder(.SD, 
                   union(c('id', 'country', 'ccode', 'year', "continent",
                           'protestnumber','protesterviolence', 'location', 
@@ -317,9 +314,11 @@ fread("Raw-data/protest_data.csv", na.strings = "", integer64 = "double"
                         names(.SD)))]
 
 
+
 # Changing protester demands and state responses to a longer format
-response_tidy <-
-protest_data[, melt(.SD, 
+
+ProtesterStateActionsMelted <-
+ProtestClean[, melt(.SD, 
                     id.vars = "id",
                     measure.vars = str_subset(names(.SD),
                                               "^protesterdemand|^stateresponse"),
@@ -333,7 +332,7 @@ protest_data[, melt(.SD,
   ][, !c("variable")
   ][, unique(.SD)
   ][, merge(.SD,
-            CJ(id = unique(protest_data$id),
+            CJ(id = unique(ProtestClean$id),
                actions = unique(actions)),
             by = c("id", "actions"), all = TRUE)
   ][is.na(action_occur), action_occur := FALSE
@@ -342,10 +341,11 @@ protest_data[, melt(.SD,
 
 
 # Joining protester demands and state responses in a longer format
-protest_data_tidy <-
-protest_data[, .SD, .SDcols = !patterns("^protesterdemand|^stateresponse")
+
+ProtestCleanTidy <-
+ProtestClean[, .SD, .SDcols = !patterns("^protesterdemand|^stateresponse")
   ][, merge(.SD,
-            response_tidy,
+            ProtesterStateActionsMelted,
             by = "id", all = TRUE)
   ][, setcolorder(.SD, setdiff(names(.SD), 
                                c("protesteridentity","notes","sources")))
@@ -354,41 +354,76 @@ protest_data[, .SD, .SDcols = !patterns("^protesterdemand|^stateresponse")
 
 
 # Show final table
-protest_data_tidy[id == id[1], 
+
+TidyExample <-
+ProtestCleanTidy[id == id[1], 
                   c('id', 'country', 'participants_range', 'start_date', 
                     'end_date', 'action_source', 'actions', 'action_occur')
-  ][, id := as.character(id)] |>
-  style_as_ft()
+  ][, id := as.character(id)] 
+
+flextable(TidyExample) |>
+  border_remove() |>
+  bg(bg = "#008000", part = "header") |>
+  bold(part = "header") |>
+  color(color = "white", part = "header") |>
+  border_inner_h(border = officer::fp_border(color = "#dddddd")) |>
+  bg(i = (1:nrow(TidyExample))[1:nrow(TidyExample) %% 2 == 0], bg = "#f3f3f3") |>
+  autofit()
 
 ```
 
 # 2. Data exploration
 
-Now that we have a clean and tidy data we can start to answer interesting questions with the data by using data visualization techniques.
 
-## 3.1. Where do protests occur?
+## 2.1. Which country have more protests?
 
+In next chart we can see that the countries with more protests comes from Europe. Together, they sum 12.6% of protest in the data. Let's focus in those countries and try to answer some questions.
 
-```{r, fig.dim = c(12,12)}
+```{r}
 
-count_category(DATA = protest_data_tidy,
+plot_chr_count(DATA = ProtestCleanTidy,
                id_var = "id",
                group_var = "country",
                plot_fill_var = "continent",
-               plot_title = "Total of protests per country",
-               plot_max = 40)
+               plot_title = "Top 20 of Coutries with more Protests",
+               plot_max = 20,
+               use_cumulative_sum = TRUE)
 ```
+
+
+```{r}
+ProtestCleanTidy[country %chin% c("United Kingdom")
+  ][ action_occur == TRUE
+  ][, source_and_action := paste0(action_source,"_",actions)
+  ][, as.data.table(widyr::pairwise_count(.SD, source_and_action, id))
+  ][, id := 1:.N
+  ][, melt(.SD, id.vars = c("id","n"))
+  ][n >=0
+  ][, variable := paste0("item",1:.N), id
+  ][, dcast(.SD, id + n ~ variable, value.var = "value")
+  ][, id := NULL
+  ][, unique(.SD)
+  ][item1 %like% "^protester_" & 
+      item2 %like% "^state_" 
+  ][,`:=`(item1 = str_remove(item1,"^\\w+_\\w+_"),
+          item2 = str_remove(item2,"^\\w+_\\w+_"))
+  ][order(-n)
+  ][item2 == "accomodation"]
+
+```
+
+
 
 
 ```{r, fig.dim = c(14,10)}
 
-count_category(DATA = protest_data_tidy,
+plot_chr_count(DATA = ProtestCleanTidy,
                id_var = "id",
                group_var = "country",
                plot_fill_var = "continent",
                plot_title = "Total of protests per country",
                plot_max = 40,
-               pct_cumsum = FALSE)+
+               use_cumulative_sum = FALSE)+
   labs(subtitle = " ")+
   facet_wrap(~continent, scales = "free_y")+
   theme(legend.position = "none")
@@ -396,14 +431,14 @@ count_category(DATA = protest_data_tidy,
 ```
 
 
-As we can see in the chart most of the protests occurs in **`r levels(protest_data_tidy$continent)[1]`** and  **`r levels(protest_data_tidy$continent)[2]`**.
+As we can see in the chart most of the protests occurs in **`r levels(ProtestCleanTidy$continent)[1]`** and  **`r levels(ProtestCleanTidy$continent)[2]`**.
 
-As this data have information of protests between *`r protest_data_tidy[, min(year)]`* and *`r protest_data_tidy[, max(year)]`* let's see how the number of protests change each year for each continent.
+As this data have information of protests between *`r ProtestCleanTidy[, min(year)]`* and *`r ProtestCleanTidy[, max(year)]`* let's see how the number of protests change each year for each continent.
 
 ```{r, fig.align='center', fig.dim = c(10,6)}
 
 continent_count_year_plot <-
-protest_data_tidy[, .(number_protest = uniqueN(id)),
+ProtestCleanTidy[, .(number_protest = uniqueN(id)),
                   .(continent, year)] |>
   SharedData$new(key = ~continent, group = "Select a continent") |>
   ggplot(aes(year, number_protest, color = continent))+
@@ -421,7 +456,7 @@ protest_data_tidy[, .(number_protest = uniqueN(id)),
 
 ```
 
-At first view, we can see that *2020* isn't a normal year as countries have less protests that year than any other year in the past. That abnormality makes sense when we check that he last date in data is ***`r protest_data_tidy[,max(c(start_date,end_date))] |> format("%m/%d/%y")`***.
+At first view, we can see that *2020* isn't a normal year as countries have less protests that year than any other year in the past. That abnormality makes sense when we check that he last date in data is ***`r ProtestCleanTidy[,max(c(start_date,end_date))] |> format("%m/%d/%y")`***.
 
 Checking each individual Continent by clicking over each one we can see:
 
@@ -437,7 +472,7 @@ Checking each individual Continent by clicking over each one we can see:
 
 ```{r, fig.align='center', fig.dim = c(10,6)}
 
-protest_data_tidy[continent == "Europe", 
+ProtestCleanTidy[continent == "Europe", 
                   .(number_protest = uniqueN(id)),
                   .( country, year)] |>
   ggplot(aes(number_protest))+
@@ -446,7 +481,7 @@ protest_data_tidy[continent == "Europe",
 
 
 EUR_count_year_plot <-
-protest_data_tidy[continent == "Europe", 
+ProtestCleanTidy[continent == "Europe", 
                   .(number_protest = uniqueN(id)),
                   .( country, year)
   ][, number_protest_max := max(number_protest), country
