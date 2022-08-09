@@ -390,30 +390,48 @@ plot_chr_count(DATA = ProtestCleanTidy,
                use_cumulative_sum = TRUE)
 ```
 
+## 2.2. UK Graph Analysis
 
-```{r}
-ProtestCleanTidy[country %chin% c("United Kingdom")
-  ][ action_occur == TRUE
-  ][, source_and_action := paste0(action_source,"_",actions)
-  ][, as.data.table(widyr::pairwise_count(.SD, source_and_action, id))
-  ][, id := 1:.N
-  ][, melt(.SD, id.vars = c("id","n"))
-  ][n >=0
-  ][, variable := paste0("item",1:.N), id
-  ][, dcast(.SD, id + n ~ variable, value.var = "value")
-  ][, id := NULL
-  ][, unique(.SD)
-  ][item1 %like% "^protester_" & 
-      item2 %like% "^state_" 
-  ][,`:=`(item1 = str_remove(item1,"^\\w+_\\w+_"),
-          item2 = str_remove(item2,"^\\w+_\\w+_"))
-  ][order(-n)
-  ][item2 == "accomodation"]
+```{r, fig.dim = c(14,10)}
+library(igraph)
+library(ggraph)
+
+UKEdges <-
+  ProtestCleanTidy[action_occur == TRUE & action_source == "protester_demand"
+  ][, setnames(.SD, "actions", "from")
+  ][ProtestCleanTidy[action_occur == TRUE & action_source == "state_response",
+                     .(to = actions), id],
+    on = .(id)
+  ][country == "United Kingdom", 
+    .(number_protests = uniqueN(id)),
+    .(from,to)
+  ][,unique(.SD)]
+
+UKNodes <-
+ProtestCleanTidy[country == "United Kingdom" & action_occur == TRUE,
+                 .(actions,action_source)
+  ][, unique(.SD)]
+
+
+UKgraph <- graph_from_data_frame(d = UKEdges, vertices = UKNodes)
+
+set.seed(1)
+
+ggraph(UKgraph, layout = "with_fr")+
+  geom_edge_link(aes(alpha = number_protests,edge_width = number_protests))+
+  geom_node_point(aes(color = action_source), size = 8)+
+  geom_node_text(aes(label = name), vjust = 2, size = 6)+
+  scale_color_brewer(palette = "Dark2")+
+  labs(title = "Graph of UK Protests")+
+  theme_void()+
+  theme(legend.position = "left",
+        legend.title = element_text(face = "bold", size = 15),
+        legend.text = element_text(size = 15),
+        plot.title = element_text(face = "bold", size = 20, hjust = 0.5))
 
 ```
 
-
-
+# 3. More plots
 
 ```{r, fig.dim = c(14,10)}
 
