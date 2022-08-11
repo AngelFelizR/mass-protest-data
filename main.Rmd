@@ -24,50 +24,62 @@ Protests are an important part of society change. In this post we are going to e
 
 This data opens the possibility to understand:
 
-1. Where do protest occurs?
-2. Why do people protest?
-3. How do states react to protest?
-4. Does a good state response increase the number protests?
-5. What does characterize an protest? (number of demands)
-6. Which kind of people participate in protests?
+1. How does the number of protests change over time?
+2. Why do people protests?
+3. Who do States respond to the protests?
 
 To answer those questions we will perform an **Exploratory Data Analysis (EDA)** applying the next skills:
 
 - R (functional) programming with **base R**
+- Missing values exploration with **naniar**
 - Data manipulation with **data.table** (much faster than dplyr of tidyverse)
 - Date manipulation with **lubridate** part of tidyverse
 - String manipulation with **stringr** part of tidyverse
 - Data visualization with **ggplot2**, **scales** and **forcats** parts of tidyverse
+- Graph visuatilation with **igraph** and **ggraph**
 - Interactive data visualization with **plotly** and **crosstalk**
 - Automated reporting with **rmarkdown**, **flextable**, **html** and **css**
 - Text mining with **tidytext**
 
+# 1. Enveroment set-up
 
-```{r initial-set-up, class.source = 'fold-hide'}
+## 1.1. Libraries and data importation
 
-# 1. Libraries importation
+```{r libraries}
+
 library(data.table)
 library(lubridate)
 library(stringr)
 library(countrycode)
+library(naniar)
 library(flextable)
 library(ggplot2)
 library(scales)
 library(forcats)
+library(igraph)
+library(ggraph)
 library(plotly)
 library(crosstalk)
+
 theme_set(theme_light())
 
+ProtestRaw <-
+  fread("Raw-data/protest_data.csv", na.strings = "", integer64 = "double")
 
-# 2. Custom vectors
+```
+
+## 1.2. Custom vectors
+
+```{r fixed-vectors}
+
+# It helps to complete continent definition 
 
 EuropeMissingCountries <-  
 c("Yugoslavia", "Serbia and Montenegro",
   "Kosovo","Germany East","Czechoslovakia")
 
 
-# Next variables help to extract the number of 
-# participants from participants columns.
+# They help to extract the number of protestants
 
 KeyWordsAfterNumber <- 
 str_c(c("people","protesters","drivers","residents","supporters",
@@ -78,24 +90,30 @@ KeyWordsBeforeNumber <-
 str_c(c("about","around","more than",">","<","almost","over","more than"),
       collapse = "|")
 
+```
 
-# 3. Custom function
 
-# plot_chr_count
+## 1.3. Custom functions
+
+```{r custom-function}
+
+style_table <- function(DATA){
+  
+  DATA |>
+  flextable() |>
+  border_remove() |>
+  bg(bg = "#008000", part = "header") |>
+  bold(part = "header") |>
+  color(color = "white", part = "header") |>
+  border_inner_h(border = officer::fp_border(color = "#dddddd")) |>
+  bg(i = 1:5 %% 2 == 0, bg = "#f3f3f3") |>
+  autofit()
+  
+}
+
+
 # It counts the unique number of id_var for categories included in group_var
 # and plot_fill_var a col plot.
-#   
-#  Arguments
-#  DATA: A data.table with data to count.
-#  id_var: A character value that defines the id column to count the events.
-#  group_var: A character value that defines the column to group by.
-#  plot_fill_var: A character value that defines the column to group by
-#                 and fill the plot.
-#  plot_fill: A character value with constant color to fill all bars.
-#  plot_title: A character value that defines the plot title.
-#  plot_max: A numeric value that defines the number of categories 
-#            that will appear in the plot.
-#  use_cumulative_sum: A boolean value to perform a cumulative sum of percentages.
 
 plot_chr_count <- function(DATA,
                            id_var,
@@ -110,10 +128,10 @@ plot_chr_count <- function(DATA,
   # To be able to color bar according to an extra variable it's needed
   # that all the data to be summarize by the color variable.
   
-  if(!missing(plot_fill_var)){
-    group_vector <- c("group",plot_fill_var)
-  }else{
+  if(missing(plot_fill_var)){
     group_vector <- "group"
+  }else{
+    group_vector <- c("group",plot_fill_var)
   }
   
   
@@ -163,11 +181,12 @@ plot_chr_count <- function(DATA,
     
   }
   
-  
+
   # Applying theme customization
   
   base_aes +
-    geom_text(aes(label = percent(pct, accuracy = 0.1)), hjust = -0.3, size = 6)+
+    geom_text(aes(label = percent(pct, accuracy = 0.1)),
+              hjust = -0.3, size = 6)+
     geom_blank(aes(x = number_protest *1.08))+
     scale_x_continuous(labels = comma_format(accuracy = 1))+
     labs(title = plot_title, x = "", y = "", fill = fill_title)+
@@ -176,16 +195,63 @@ plot_chr_count <- function(DATA,
           legend.position = "top",
           legend.title = element_text(color = "black",size = 16),
           legend.text = element_text(color = "black",size = 14),
-          axis.title = element_text(color = "black", face = "bold", size = 18),
+          axis.title = element_text(color = "black", face = "bold", 
+                                    size = 18),
           axis.text = element_text(color = "black", size = 16),
           strip.text = element_text(face = "bold",size = 14),
           panel.grid.major.y = element_blank())
+  
 }
 
 ```
 
 
-# 1. Data wrangling
+# 2. Data wrangling
+
+## 2.1. Initial data Status
+
+As we can see bellow most of the rows represent a protest.
+
+```{r}
+ProtestRaw[, .(`Number of rows` = .N / max(.I)), 
+           .(protest = fifelse(protest>0,"Protest","No Protest"))] |>
+  ggplot(aes("Protest", `Number of rows`))+
+  geom_col(aes(fill= protest))+
+  geom_text(aes(label = percent(`Number of rows`)), 
+            position = position_stack(vjust = 0.5), 
+            fontface = "bold", size = 7)+
+  scale_fill_manual(values = c("No Protest" = "gray80", 
+                               "Protest" = "seagreen"))+
+  coord_polar(theta = "y")+
+  labs(title = "Propotion of rows that represent a protest", fill = "") +
+  theme_void()+
+  theme(legend.position = "top",
+        plot.title = element_text(face = "bold", size = 25,
+                                  hjust = 0.5, margin = margin(b = 40)),
+        legend.text = element_text(size = 18))
+```
+
+
+When a row doesn't represent a protest has lost of missing data
+
+```{r}
+copy(ProtestRaw)[,protest := fifelse(protest>0,"Protest","No Protest")]|>
+  gg_miss_var( facet = protest, show_pct = TRUE)+
+  theme(axis.text = element_text(size = 16),
+        axis.title = element_text(size = 16, face = "bold"),
+        strip.text = element_text(size = 16))
+```
+
+Dates are store in different columns
+
+```{r}
+ProtestRaw[1:5, .SD, 
+           .SDcols = patterns("^id$|day$|month$|year$")
+  ][, id := as.character(id)] |>
+  style_table()
+```
+
+
 
 Before being able to explore the data it's important to face some problems with the data. The next table summarizes the problems founds in the data and the problems to solve each problem:
 
@@ -393,8 +459,6 @@ plot_chr_count(DATA = ProtestCleanTidy,
 ## 2.2. UK Graph Analysis
 
 ```{r, fig.dim = c(14,10)}
-library(igraph)
-library(ggraph)
 
 UKEdges <-
   ProtestCleanTidy[action_occur == TRUE & action_source == "protester_demand"
