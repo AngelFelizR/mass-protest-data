@@ -5,12 +5,11 @@ date: "`r format(Sys.Date(),'%d %B %Y')`"
 output: 
   html_document:
     css: styles.css
-    code_folding: show
     highlight: tango
     theme: united
     toc: true
     toc_float:
-      collapsed: true
+      collapsed: false
 ---
 
 ```{r setup, include=FALSE}
@@ -32,18 +31,24 @@ To answer those questions we will perform an **Exploratory Data Analysis (EDA)**
 
 - R (functional) programming with **base R**
 - Missing values exploration with **naniar**
-- Data manipulation with **data.table** (much faster than dplyr of tidyverse)
-- Date manipulation with **lubridate** part of tidyverse
-- String manipulation with **stringr** part of tidyverse
-- Data visualization with **ggplot2**, **scales** and **forcats** parts of tidyverse
-- Graph visuatilation with **igraph** and **ggraph**
+- Data manipulation with **data.table**, **lubridate** and **stringr**
+- Static data visualization with **ggplot2**, **scales**, **forcats** and **patchwork**
+- Network visualization with **igraph** and **ggraph**
 - Interactive data visualization with **plotly** and **crosstalk**
 - Automated reporting with **rmarkdown**, **flextable**, **html** and **css**
 - Text mining with **tidytext**
 
+</br>
+
 # 1. Enveroment set-up
 
-## 1.1. Libraries and data importation
+The first step to perform our analysis is to define all the functions and vectors
+that we will use during the projects. To make that possible we will follow the next
+steps:
+
+</br>
+
+1. Libraries and data importation.
 
 ```{r libraries}
 
@@ -56,6 +61,7 @@ library(flextable)
 library(ggplot2)
 library(scales)
 library(forcats)
+library(patchwork)
 library(igraph)
 library(ggraph)
 library(plotly)
@@ -68,34 +74,26 @@ ProtestRaw <-
 
 ```
 
-## 1.2. Custom vectors
+</br>
+
+2. Defining useful vectors to clean data.
 
 ```{r fixed-vectors}
 
 # It helps to complete continent definition 
-
 EuropeMissingCountries <-  
 c("Yugoslavia", "Serbia and Montenegro",
   "Kosovo","Germany East","Czechoslovakia")
 
-
-# They help to extract the number of protestants
-
-KeyWordsAfterNumber <- 
-str_c(c("people","protesters","drivers","residents","supporters",
-        "members","participants","former","demonstrators"),
-      collapse = "|")
-
-KeyWordsBeforeNumber <-
-str_c(c("about","around","more than",">","<","almost","over","more than"),
-      collapse = "|")
-
 ```
 
+</br>
 
-## 1.3. Custom functions
+3. Defining custom functions to avoid repeating many times the same code.
 
 ```{r custom-function}
+
+# We will use this style to show data frames.
 
 style_table <- function(DATA){
   
@@ -106,14 +104,15 @@ style_table <- function(DATA){
   bold(part = "header") |>
   color(color = "white", part = "header") |>
   border_inner_h(border = officer::fp_border(color = "#dddddd")) |>
-  bg(i = 1:5 %% 2 == 0, bg = "#f3f3f3") |>
+  bg(i = 1:nrow(DATA) %% 2 == 0, bg = "#f3f3f3") |>
   autofit()
   
 }
 
 
-# It counts the unique number of id_var for categories included in group_var
-# and plot_fill_var a col plot.
+# Creates a bar plot by counting unique number of id_var 
+# for categories included in group_var and plot_fill_var. 
+# plot_fill_var is used to fill the bars.
 
 plot_chr_count <- function(DATA,
                            id_var,
@@ -123,10 +122,7 @@ plot_chr_count <- function(DATA,
                            plot_title,
                            plot_max,
                            use_cumulative_sum = TRUE){
-  
-  
-  # To be able to color bar according to an extra variable it's needed
-  # that all the data to be summarize by the color variable.
+
   
   if(missing(plot_fill_var)){
     group_vector <- "group"
@@ -205,14 +201,23 @@ plot_chr_count <- function(DATA,
 
 ```
 
+</br>
 
-# 2. Data wrangling
+# 2. Tidying data
 
-## 2.1. Initial data Status
+As most data in the world this data needs some transformations facilitate it's
+exploration.
 
-As we can see bellow most of the rows represent a protest.
+</br>
 
-```{r}
+## 2.1. Data quality exploration
+
+To start this process, let's summary the influence of `protest` variable across
+the missing values in each variable.
+
+```{r , fig.dim = c(14,10)}
+
+RowProtestProportion_plot <-
 ProtestRaw[, .(`Number of rows` = .N / max(.I)), 
            .(protest = fifelse(protest>0,"Protest","No Protest"))] |>
   ggplot(aes("Protest", `Number of rows`))+
@@ -223,136 +228,155 @@ ProtestRaw[, .(`Number of rows` = .N / max(.I)),
   scale_fill_manual(values = c("No Protest" = "gray80", 
                                "Protest" = "seagreen"))+
   coord_polar(theta = "y")+
-  labs(title = "Propotion of rows that represent a protest", fill = "") +
+  labs(title = "Propotion of rows that\nrepresent a protest", fill = "") +
   theme_void()+
   theme(legend.position = "top",
         plot.title = element_text(face = "bold", size = 25,
                                   hjust = 0.5, margin = margin(b = 40)),
         legend.text = element_text(size = 18))
-```
 
 
-When a row doesn't represent a protest has lost of missing data
-
-```{r}
+MissingVar_plot <-
 copy(ProtestRaw)[,protest := fifelse(protest>0,"Protest","No Protest")]|>
   gg_miss_var( facet = protest, show_pct = TRUE)+
-  theme(axis.text = element_text(size = 16),
+  labs(title = "Proportions of missing\nvalues per variable")+
+  theme(axis.text = element_text(size = 15),
         axis.title = element_text(size = 16, face = "bold"),
-        strip.text = element_text(size = 16))
-```
+        strip.text = element_text(size = 16),
+        plot.title = element_text(size = 25, face = "bold",
+                                  hjust = 0.5, margin = margin(b = 40)))
 
-Dates are store in different columns
+
+RowProtestProportion_plot + MissingVar_plot
+
+```
+</br>
+
+By checking the last chart we can see that:
+
+</br>
+
+**Problem 1:** Only **`r percent(ProtestRaw[, mean(protest == 0)], accuracy = 1)` rows** in the data represent a country and year where there wasn't protest recorded.
+Rows without protests have to many missing values and it makes same, as most of 
+the variables in data give information assuming there were a protest.
+
+**Solution:** We will take out all the rows that don't have protest related. 
+
+</br>
+
+**Problem 2:** Protests' start and end days are split in days, months and years columns. With that format it will hard to explore the data properly.
+
+**Solution:** We will join days, months and years to create the `start_date` and 
+`end_date` variables as Date columns.
+
+</br>
+
+**Problem 3:** `participants_category` is a categorical variable with **`r ProtestRaw[protest == 1, uniqueN(participants_category)] |> comma()` unique values**, but it has too many missing values.
+
+**Solution:** We will use `participants` variable to complete `participants_category`'s values. 
+
+`participants` is also a categorical variable with **`r ProtestRaw[, uniqueN(participants)] |> comma()` unique values**, but only **`r ProtestRaw[protest == 1, mean(is.na(participants))] |> percent(accuracy = 0.01)` of its rows** are missing. Bellow we can see some examples of how 
+`participants_category` and `participants` are related.
 
 ```{r}
-ProtestRaw[1:5, .SD, 
-           .SDcols = patterns("^id$|day$|month$|year$")
-  ][, id := as.character(id)] |>
+set.seed(14)
+
+copy(ProtestRaw)[is.na(`participants_category`) & 
+                   !is.na(`participants`) &
+                   str_detect(participants,"[:symbol:]|-"), 
+                 case_type := 1
+  ][!is.na(`participants_category`) & 
+      !is.na(`participants`) &
+      !participants %like% "\\d",
+    case_type := 2
+  ][!is.na(case_type),
+    .(id = as.character(id), country, year = as.character(year),
+      `participants_category`, `participants`, case_type)
+  ][, .SD[sample.int(.N,5)], case_type
+  ][, !c("case_type")] |>
   style_table()
+
 ```
 
+As we can see `participants` can have only words, number of number ranges almost
+all related to indicate the number of participants in each protest, but is less
+exact than `participants_category`, the best alternative is to complete the missing
+values of `participants_category` based on `participants`.
 
+</br>
 
-Before being able to explore the data it's important to face some problems with the data. The next table summarizes the problems founds in the data and the problems to solve each problem:
+**Problem 4:** Protester demands and states responses are stored across many columns. That format creates many missing values and makes hard to explore the data.
 
-<table class = "wrangling-table">
- <thead>
-  <tr>
-    <th>Order</th> 
-    <th>Problems</th> 
-    <th>Solutions</th> 
-  </tr>
- </thead>
- <tbody>
-  <tr>
-    <td>01</td> 
-    <td>Many rows don't represent a protest to analyze.</td> 
-    <td>We took those rows off.</td> 
-  </tr>
-  <tr>
-    <td>02</td> 
-    <td>Days, months and years were stored in individual columns to define protest start and end dates.</td> 
-    <td>We created Date variables to define the protest start and end dates.</td> 
-  </tr>
-  <tr>
-    <td>03</td> 
-    <td>`participants_category` column has a small number of categories but it has many missing values and `participants` mixes value with words</td> 
-    <td>We cleaned `participants` and then complete the `participants_category` with that information.</td> 
-   </tr>
-    <tr>
-    <td>04</td> 
-    <td>Protester demands and state responses were stored in many columns as one protest can have many values in both situation</td> 
-    <td>We reshape the data to have longer table where protester demands and state responses are saved in 3 columns without missing values.</td> 
-   </tr>
-   
-  </tbody>
-</table>
-
-Below we can see a protest `id` as an example of the changes made. That table has the next characteristics:
-
-1. Most of the protests have a `participants_range` category.
-2. All protests have a`start_date` and an `end_date` in a Date format.
-3. Every protest has a row for every possible action that could occur during the protest ether made by protesters or the state and the last column confirms whether the action took place or not.
-
-```{r data-wrangling, class.source = 'fold-hide'}
-
-# Data importation and cleaning states
-
-ProtestClean <-
-  fread("Raw-data/protest_data.csv", na.strings = "", integer64 = "double"
-  )[protest == 1
-  ][,`:=`(start_date =  paste(startyear,startmonth,startday,sep = "-") |> as_date(),
-          end_date =  paste(endyear,endmonth,endday,sep = "-") |> as_date(),
-          participants = participants |>  str_to_lower() |> 
-            str_remove_all(",") |>
-            str_replace_all(" +"," "))
-    
-    
-  # Adding continents based on countries names
+**Solution:** We will reshape the data to have just 3 columns. 
+  - `action_source`: Defines if the action was made by protesters or the state.
+  - `actions`: Stores the values stored in the current columns.
+  - `action_occur`: Defines whether an action took place in a particular protest.
   
-  ][!country %chin% EuropeMissingCountries, 
-    continent := countrycode(country, 
-                             origin = "country.name",
-                             destination = "continent")
-  ][country %chin% EuropeMissingCountries, continent := "Europe"
+</br>
+
+## 2.2. Data cleaning process
+
+At first we solve the most simple problem in the data.
+
+```{r}
+
+ProtestOnlyDates <-
   
+  # Problem 1: Keeping rows related to a protest
+  ProtestRaw[protest == 1, !c("protest")
+        
+  # Problem 2: Joining days, months and years
+  ][, `:=`(start_date =  
+             paste(startyear,startmonth,startday,sep = "-") |> ymd(),
+           end_date =  
+             paste(endyear,endmonth,endday,sep = "-") |> ymd())
+  ][, .SD, .SDcols = !patterns("\\w+year$|\\w+month$|\\w+day$")]
+
+```
+
+</br>
+
+Now we can start to clean the participants variable
+--# Problem 3: Completing participants_category variable  
+
+
+```{r data-wrangling}
+
+ProtestOnlyDates[is.na(participants_category)
     
-  # Extracting values from participants column
-  
+  # Applying general cleaning to participants
+  ][,participants := participants |>  
+                      str_to_lower() |> 
+                      str_remove_all(",") |>
+                      str_replace_all(" +"," ")
+    
+  # Getting the average of participants intervals
   ][, c("min","max") := tstrsplit(participants,"-| to ", fixed = FALSE)
   ][participants %like% "between \\d+ and \\d+", 
     `:=`(min = str_match(participants, "between (\\d+) and \\d+")[,2],
          max = str_match(participants, "between \\d+ and (\\d+)")[,2])
   ][, c("min","max") := lapply(.(min, max), 
-                               function(x) str_extract(x, "\\d+") |> as.double())
+                               function(x) str_extract(x, "\\d+") |> 
+                                            as.double())
   ][, participants_clean := (min+max)/2
+  ][, !c("min","max")
+    
+  # Getting number by using regular expressions
   ][ participants %like% "^\\d+$" & is.na(participants_clean),
-     participants_clean :=  as.double(participants)
-  ][participants %like% "\\+"& is.na(participants_clean),
-    participants_clean := str_remove_all(participants,"\\+|[A-Za-z]") |> as.double()
-  ][participants %like% "\\d+s"& is.na(participants_clean),
-    participants_clean :=  str_match(participants,"(\\d+)s")[,2] |>  as.double()
-  ][participants %like% str_glue("\\d+ ?({KeyWordsAfterNumber})") & 
-      is.na(participants_clean),
-    participants_clean := str_match(participants,
-                                    str_glue("(\\d+) ?({KeyWordsAfterNumber})"))[,2] |>
-                          as.double()
-  ][participants %like% str_glue("({KeyWordsBeforeNumber}) ?\\d+") &
-      is.na(participants_clean),
-    participants_clean := str_match(participants,
-                                    str_glue("({KeyWordsBeforeNumber}) ?(\\d+)"))[,3] |> 
-                          as.double()
+     participants_clean := as.double(participants)
+  ][participants %like% "^\\d+\\+$"& is.na(participants_clean),
+    participants_clean := str_remove_all(participants,"\\+") |> as.double()
+  ][participants %like% "^\\d+s"& is.na(participants_clean),
+    participants_clean := str_match(participants,"^(\\d+)s")[,2] |>  as.double()
+  ][participants %like% "^[><]\\d+" & is.na(participants_clean),
+    participants_clean := str_match(participants,"^[><](\\d+)")[,2] |> as.double()
+  ][id == 922006004, 
+    participants_clean := 50
+  ][id == 6602002005, 
+    participants_clean := 2000
   
-    
-  # Adding after reading the description
-  
-  ][id == 922006004, participants_clean := 50
-  ][id == 6602002005, participants_clean := 2000
-    
-  
-  # Adding the Number of participants by range category
-  
-  ][, participants_category_clean := 
+  # Creating categories  
+  ][, participants_category := 
       fcase( between(participants_clean, 1, 99), "1-99",
              between(participants_clean, 100, 999), "100-999",
              between(participants_clean, 1000, 1999), "1000-1999",
@@ -360,26 +384,21 @@ ProtestClean <-
              between(participants_clean, 5000, 10000), "5000-10000",
              participants_clean > 10000, ">10000",
              default = "Missing")
-  ][is.na(participants_category), participants_category :=  participants_category_clean
-  ][participants_category == "50-99", participants_category := "1-99"
+  ][, !c("participants_clean")
+    
+    
+  ][, rbind(.SD,ProtestOnlyDates[!is.na(participants_category)])
+    
+    
+  ][participants_category == "50-99",
+    participants_category := "1-99"
   ][, participants_range := factor(participants_category,
-                                    levels = c("Missing","1-99", "100-999",
-                                               "1000-1999",  "2000-4999", 
-                                               "5000-10000",">10000"))
-    
-    
-  # Keeping and organizing columns' order
-  
-  ][, !c("participants","participants_clean","participants_category_clean",
-         "participants_category",'region',"startyear","startmonth","startday",
-         "endyear","endmonth","endday", "protest","min","max")
-  ][, setcolorder(.SD, 
-                  union(c('id', 'country', 'ccode', 'year', "continent",
-                          'protestnumber','protesterviolence', 'location', 
-                          "participants_range","start_date","end_date"),
-                        names(.SD)))]
-
-
+                                  levels = c("Missing",   "1-99",     
+                                             "100-999",   "1000-1999", 
+                                             "2000-4999", "5000-10000",
+                                             ">10000"))
+  ][, !c("participants","participants_category")
+  ][, sum(participants_range == "Missing")]
 
 # Changing protester demands and state responses to a longer format
 
@@ -421,22 +440,36 @@ ProtestClean[, .SD, .SDcols = !patterns("^protesterdemand|^stateresponse")
 
 # Show final table
 
-TidyExample <-
 ProtestCleanTidy[id == id[1], 
-                  c('id', 'country', 'participants_range', 'start_date', 
-                    'end_date', 'action_source', 'actions', 'action_occur')
-  ][, id := as.character(id)] 
-
-flextable(TidyExample) |>
-  border_remove() |>
-  bg(bg = "#008000", part = "header") |>
-  bold(part = "header") |>
-  color(color = "white", part = "header") |>
-  border_inner_h(border = officer::fp_border(color = "#dddddd")) |>
-  bg(i = (1:nrow(TidyExample))[1:nrow(TidyExample) %% 2 == 0], bg = "#f3f3f3") |>
-  autofit()
+                 c('id', 'country', 'participants_range', 'start_date', 
+                   'end_date', 'action_source', 'actions', 'action_occur')
+  ][, id := as.character(id)] |>
+  style_table()
 
 ```
+
+
+
+</br>
+
+```{r eval=FALSE, include=FALSE}
+ProtestClean <- 
+
+
+  # Adding continents based on countries names
+  
+  ][!country %chin% EuropeMissingCountries, 
+    continent := countrycode(country, 
+                             origin = "country.name",
+                             destination = "continent")
+  ][country %chin% EuropeMissingCountries, continent := "Europe"
+    
+    
+    </br>
+
+
+```
+
 
 # 2. Data exploration
 
