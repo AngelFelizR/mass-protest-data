@@ -314,13 +314,14 @@ values of `participants_category` based on `participants`.
   
 </br>
 
-## 2.2. Data cleaning process
+## 2.2. Data tidying process
 
-At first we solve the most simple problem in the data.
+The next script will solve **Problem 1** and **Problem 2**, and save the result
+as `ProtestFilteredWithDates`.
 
 ```{r}
 
-ProtestOnlyDates <-
+ProtestFilteredWithDates <-
   
   # Problem 1: Keeping rows related to a protest
   ProtestRaw[protest == 1, !c("protest")
@@ -336,13 +337,14 @@ ProtestOnlyDates <-
 
 </br>
 
-Now we can start to clean the participants variable
---# Problem 3: Completing participants_category variable  
-
+The next script will solve **Problem 3** and save the result as `ProtestClean`.
 
 ```{r data-wrangling}
 
-ProtestOnlyDates[is.na(participants_category)
+ProtestClean <-
+  
+  # Let's work only with protests that are missing participants_category
+ProtestFilteredWithDates[is.na(participants_category)
     
   # Applying general cleaning to participants
   ][,participants := participants |>  
@@ -361,21 +363,23 @@ ProtestOnlyDates[is.na(participants_category)
   ][, participants_clean := (min+max)/2
   ][, !c("min","max")
     
-  # Getting number by using regular expressions
-  ][ participants %like% "^\\d+$" & is.na(participants_clean),
-     participants_clean := as.double(participants)
-  ][participants %like% "^\\d+\\+$"& is.na(participants_clean),
+  # Getting number of protesters by using regular expressions
+  ][participants %like% "^\\d+$" & is.na(participants_clean),
+    participants_clean := as.double(participants)
+  ][participants %like% "^\\d+\\+$" & is.na(participants_clean),
     participants_clean := str_remove_all(participants,"\\+") |> as.double()
-  ][participants %like% "^\\d+s"& is.na(participants_clean),
+  ][participants %like% "^\\d+s" & is.na(participants_clean),
     participants_clean := str_match(participants,"^(\\d+)s")[,2] |>  as.double()
   ][participants %like% "^[><]\\d+" & is.na(participants_clean),
     participants_clean := str_match(participants,"^[><](\\d+)")[,2] |> as.double()
+    
+  # Getting number of protesters by reading the notes variable
   ][id == 922006004, 
     participants_clean := 50
   ][id == 6602002005, 
     participants_clean := 2000
   
-  # Creating categories  
+  # Creating a new participants_category variable
   ][, participants_category := 
       fcase( between(participants_clean, 1, 99), "1-99",
              between(participants_clean, 100, 999), "100-999",
@@ -386,10 +390,11 @@ ProtestOnlyDates[is.na(participants_category)
              default = "Missing")
   ][, !c("participants_clean")
     
+  # Adding protests that aren't missing participants_category  
+  ][, rbind(.SD,ProtestFilteredWithDates[!is.na(participants_category)])
     
-  ][, rbind(.SD,ProtestOnlyDates[!is.na(participants_category)])
-    
-    
+  # Making participants_category a factor variable 
+  #to make easier to plot the data later
   ][participants_category == "50-99",
     participants_category := "1-99"
   ][, participants_range := factor(participants_category,
@@ -397,12 +402,20 @@ ProtestOnlyDates[is.na(participants_category)
                                              "100-999",   "1000-1999", 
                                              "2000-4999", "5000-10000",
                                              ">10000"))
-  ][, !c("participants","participants_category")
-  ][, sum(participants_range == "Missing")]
+  ][, !c("participants","participants_category")]
 
-# Changing protester demands and state responses to a longer format
+```
 
-ProtesterStateActionsMelted <-
+</br>
+
+After cleaning the variables we are ready to reshape the data to a longer format
+and solve the **problem 4**.
+
+```{r}
+
+ProtestCleanTidy <-
+  
+  # Melting protesterdemand and stateresponse just keeping protest id
 ProtestClean[, melt(.SD, 
                     id.vars = "id",
                     measure.vars = str_subset(names(.SD),
@@ -412,60 +425,75 @@ ProtestClean[, melt(.SD,
   ][!is.na(actions) & actions %like% "\\w"
   ][, variable := fifelse(variable %like% "^protesterdemand", 
                           "protester_demand","state_response")
+    
+  # Taking out any duplicated answer stored in protesterdemand or stateresponse
+  ][, unique(.SD)
+    
+  # Adding ids that don't have either protester_demand or state_response
+  # and adding actions that didn't happen in each protest
   ][, `:=` (action_occur = TRUE,
             actions = str_c(variable," - ",actions))
   ][, !c("variable")
-  ][, unique(.SD)
   ][, merge(.SD,
             CJ(id = unique(ProtestClean$id),
                actions = unique(actions)),
             by = c("id", "actions"), all = TRUE)
   ][is.na(action_occur), action_occur := FALSE
   ][, c("action_source", "actions") := tstrsplit(actions, split = " - ", fixed = TRUE)
-  ][,c("id","action_source","actions","action_occur")]
+    
+  # Adding the other variables to have back the data complete
+  ][, merge(.SD, ProtestClean, by = "id", all = TRUE)
+  ][, .SD, .SDcols = !patterns("^protesterdemand|^stateresponse")]
+
+```
+
+</br>
+
+## 2.3. Result
 
 
-# Joining protester demands and state responses in a longer format
+```{r}
 
-ProtestCleanTidy <-
-ProtestClean[, .SD, .SDcols = !patterns("^protesterdemand|^stateresponse")
-  ][, merge(.SD,
-            ProtesterStateActionsMelted,
-            by = "id", all = TRUE)
-  ][, setcolorder(.SD, setdiff(names(.SD), 
-                               c("protesteridentity","notes","sources")))
-  #Making continent a factor to keep constant the color in plots
-  ][, continent := fct_reorder(continent, id, .fun = uniqueN, .desc = TRUE)]
+set.seed(14)
 
-
-# Show final table
-
-ProtestCleanTidy[id == id[1], 
-                 c('id', 'country', 'participants_range', 'start_date', 
-                   'end_date', 'action_source', 'actions', 'action_occur')
-  ][, id := as.character(id)] |>
+ProtestCleanTidy[id == sample(id, 1), 
+                 .(id = as.character(id), 
+                   country, participants_range, 
+                   start_date = format(start_date,"%m/%d/%y"),
+                   end_date = format(end_date,"%m/%d/%y"),
+                   action_source, actions, action_occur)] |>
   style_table()
 
 ```
 
 
+```{r}
 
-</br>
+ProtestCleanTidy |>
+  gg_miss_upset()
 
-```{r eval=FALSE, include=FALSE}
-ProtestClean <- 
+ProtestCleanTidy |>
+  gg_miss_var()+
+  labs(title = "Proportions of missing\nvalues per variable")+
+  theme(axis.text = element_text(size = 15),
+        axis.title = element_text(size = 16, face = "bold"),
+        strip.text = element_text(size = 16),
+        plot.title = element_text(size = 25, face = "bold",
+                                  hjust = 0.5, margin = margin(b = 40)))
 
 
-  # Adding continents based on countries names
-  
-  ][!country %chin% EuropeMissingCountries, 
-    continent := countrycode(country, 
-                             origin = "country.name",
-                             destination = "continent")
-  ][country %chin% EuropeMissingCountries, continent := "Europe"
-    
-    
-    </br>
+```
+
+
+# 3. Adding new variables
+
+```{r include=FALSE}
+ProtestCleanTidy <- 
+  ProtestCleanTidy[!country %chin% EuropeMissingCountries, 
+                   continent := countrycode(country, 
+                                            origin = "country.name",
+                                            destination = "continent")
+  ][country %chin% EuropeMissingCountries, continent := "Europe"]
 
 
 ```
