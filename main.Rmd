@@ -25,7 +25,7 @@ This data opens the possibility to understand:
 
 1. How does the number of protests change over time?
 2. Why do people protests?
-3. Who do States respond to the protests?
+3. Who do states respond to the protests?
 
 To answer those questions we will perform an **Exploratory Data Analysis (EDA)** applying the next skills:
 
@@ -42,15 +42,20 @@ To answer those questions we will perform an **Exploratory Data Analysis (EDA)**
 
 # 1. Enveroment set-up
 
-The first step to perform our analysis is to define all the functions and vectors
-that we will use during the projects. To make that possible we will follow the next
-steps:
+To set up the environment we will use to create the report we just need to 
+follow the next steps:
 
 </br>
 
 1. Libraries and data importation.
 
 ```{r libraries}
+# If you want to reproduce this analysis you can use the same version
+# of the packages I used by running the flowing code once:
+#
+#  if(!require(renv)) install.packages("renv")
+#  renv::status()
+#  renv::restore()
 
 library(data.table)
 library(lubridate)
@@ -66,6 +71,8 @@ library(igraph)
 library(ggraph)
 library(plotly)
 library(crosstalk)
+library(ggcorrplot)
+library(rvest)
 
 theme_set(theme_light())
 
@@ -76,20 +83,7 @@ ProtestRaw <-
 
 </br>
 
-2. Defining useful vectors to clean data.
-
-```{r fixed-vectors}
-
-# It helps to complete continent definition 
-EuropeMissingCountries <-  
-c("Yugoslavia", "Serbia and Montenegro",
-  "Kosovo","Germany East","Czechoslovakia")
-
-```
-
-</br>
-
-3. Defining custom functions to avoid repeating many times the same code.
+2. Defining custom functions to avoid repeating many times the same code.
 
 ```{r custom-function}
 
@@ -210,7 +204,7 @@ exploration.
 
 </br>
 
-## 2.1. Data quality exploration
+## 2.1. Data quality evaluation
 
 To start this process, let's summary the influence of `protest` variable across
 the missing values in each variable.
@@ -237,12 +231,25 @@ ProtestRaw[, .(`Number of rows` = .N / max(.I)),
 
 
 MissingVar_plot <-
-copy(ProtestRaw)[,protest := fifelse(protest>0,"Protest","No Protest")]|>
-  gg_miss_var( facet = protest, show_pct = TRUE)+
-  labs(title = "Proportions of missing\nvalues per variable")+
+  copy(ProtestRaw)[,protest := fifelse(protest>0,"Protest","No Protest")
+  ][, lapply(.SD, function(x) mean(is.na(x))),
+    protest
+  ][, melt(.SD, id.vars = "protest", 
+           variable.name = "Variables",
+           value.name = "# Missing")
+  ][, `:=`(Variables = fct_reorder(Variables, `# Missing`, sum))] |>
+  ggplot(aes(`# Missing`, `Variables`))+
+  geom_blank(aes(x = `# Missing` *1.15))+
+  geom_col(fill = "seagreen")+
+  geom_text(aes(label = percent(`# Missing`, accuracy = 0.01)),
+            hjust = -0.3)+
+  scale_x_continuous(labels = percent_format(accuracy = 1))+
+  facet_wrap(~protest)+
+  labs(title = "Proportions of missing\nvalues per variable",
+       x = "% Of Missing Values")+
   theme(axis.text = element_text(size = 15),
         axis.title = element_text(size = 16, face = "bold"),
-        strip.text = element_text(size = 16),
+        strip.text = element_text(size = 16, face = "bold"),
         plot.title = element_text(size = 25, face = "bold",
                                   hjust = 0.5, margin = margin(b = 40)))
 
@@ -416,7 +423,7 @@ and solve the **problem 4**.
 ProtestCleanTidy <-
   
   # Melting protesterdemand and stateresponse just keeping protest id
-ProtestClean[, melt(.SD, 
+  ProtestClean[, melt(.SD, 
                     id.vars = "id",
                     measure.vars = str_subset(names(.SD),
                                               "^protesterdemand|^stateresponse"),
@@ -451,6 +458,36 @@ ProtestClean[, melt(.SD,
 
 ## 2.3. Result
 
+After applying the changes we can see that currently all the columns have less
+than 5% of missing values.
+
+```{r}
+
+  ProtestCleanTidy[, lapply(.SD, function(x) mean(is.na(x)))
+  ][, id := 1
+  ][, melt(.SD, id.vars = "id", 
+           variable.name = "Variables",
+           value.name = "# Missing")
+  ][, `:=`(Variables = fct_reorder(Variables, `# Missing`, sum))] |>
+  ggplot(aes(`# Missing`, `Variables`))+
+  geom_blank(aes(x = `# Missing` *1.15))+
+  geom_col(fill = "forestgreen")+
+  geom_text(aes(label = percent(`# Missing`, accuracy = 0.01)),
+            hjust = -0.3)+
+  scale_x_continuous(labels = percent_format(accuracy = 0.01))+
+  labs(title = "Proportions of missing\nvalues per variable",
+       x = "% Of Missing Values")+
+  theme(axis.text = element_text(size = 15),
+        axis.title = element_text(size = 16, face = "bold"),
+        strip.text = element_text(size = 16),
+        plot.title = element_text(size = 25, face = "bold",
+                                  hjust = 0.5, margin = margin(b = 40)))
+
+```
+
+</br>
+
+To have better perspective how does the data look like here is an example.
 
 ```{r}
 
@@ -466,47 +503,109 @@ ProtestCleanTidy[id == sample(id, 1),
 
 ```
 
-
-```{r}
-
-ProtestCleanTidy |>
-  gg_miss_upset()
-
-ProtestCleanTidy |>
-  gg_miss_var()+
-  labs(title = "Proportions of missing\nvalues per variable")+
-  theme(axis.text = element_text(size = 15),
-        axis.title = element_text(size = 16, face = "bold"),
-        strip.text = element_text(size = 16),
-        plot.title = element_text(size = 25, face = "bold",
-                                  hjust = 0.5, margin = margin(b = 40)))
-
-
-```
-
+</br>
 
 # 3. Adding new variables
 
-```{r include=FALSE}
-ProtestCleanTidy <- 
-  ProtestCleanTidy[!country %chin% EuropeMissingCountries, 
-                   continent := countrycode(country, 
-                                            origin = "country.name",
-                                            destination = "continent")
-  ][country %chin% EuropeMissingCountries, continent := "Europe"]
+Some 
+
+```{r}
+
+
+HolidaysHomePage <- 
+  read_html("https://www.officeholidays.com/countries") |>
+  html_elements(xpath = '//li/a[i[starts-with(@class,"sprite")]]')
+
+HolidaysHomePageTable <-
+  data.table(
+  country = html_text(HolidaysHomePage) |>
+    str_match("\\w.+\\w$")|>
+    as.vector(),
+  link = html_attr(HolidaysHomePage,"href")
+  )[country %chin% unique(ProtestCleanTidy[["country"]])]
+
+
+# I tried to use lappy but it was just return NULL values in the list
+
+ListToFill <- vector(mode = "list")
+
+for(i in seq_len(nrow(HolidaysHomePageTable))){
+  
+  ListToFill <-
+    append(
+      ListToFill,
+      list(read_html(HolidaysHomePageTable[["link"]][i]) |>
+             html_table(header = TRUE) |>
+             (\(LIST) as.data.table(LIST[[1]]))() |>
+             (\(DT) DT[, country := 
+                         HolidaysHomePageTable[["country"]][i]][])())
+           )
+  
+  Sys.sleep(1)
+}
+
+
+CountriesHolidaysTable <-
+  rbindlist(ListToFill, fill = TRUE, use.names = TRUE
+  )[, c("country","Date","Holiday Name", "Type","Comments")
+  ][, id := .I
+  ][, .SD[CJ(id = id,
+             year = min(ProtestCleanTidy[["year"]]):max(ProtestCleanTidy[["year"]])),
+          on = "id"]
+  ][, `:=`(Date = str_c(year," ",Date),
+           id = NULL,
+           year = NULL)
+  ][, Date := ymd(Date)]
 
 
 ```
+
+
+
 
 
 # 2. Data exploration
 
+```{r eval=FALSE, include=FALSE}
+
+StateReponseMatrix <-
+  ProtestCleanTidy[action_source == "state_response"
+  ][, action_occur := as.double(action_occur)
+  ][, dcast(.SD, id ~ actions, value.var = "action_occur")
+  ][, !c("id")]
+
+ggcorrplot(cor(StateReponseMatrix),
+           hc.order = TRUE,
+           type = "upper",
+           lab = TRUE,
+           p.mat = cor_pmat(StateReponseMatrix)) +
+  labs(title = "TITLE TEST")
+
+
+DemandsMatrix <-
+  ProtestCleanTidy[action_source == "protester_demand"
+  ][, action_occur := as.double(action_occur)
+  ][, dcast(.SD, id ~ actions, value.var = "action_occur")
+  ][, !c("id")]
+
+ggcorrplot(cor(DemandsMatrix),
+           hc.order = TRUE,
+           type = "upper",
+           lab = TRUE,
+           p.mat = cor_pmat(DemandsMatrix)) +
+  labs(title = "TITLE TEST")
+
+```
 
 ## 2.1. Which country have more protests?
 
 In next chart we can see that the countries with more protests comes from Europe. Together, they sum 12.6% of protest in the data. Let's focus in those countries and try to answer some questions.
 
 ```{r}
+
+EuropeMissingCountries <-  
+c("Yugoslavia", "Serbia and Montenegro",
+  "Kosovo","Germany East","Czechoslovakia")
 
 plot_chr_count(DATA = ProtestCleanTidy,
                id_var = "id",
