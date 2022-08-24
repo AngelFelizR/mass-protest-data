@@ -30,7 +30,7 @@ This data opens the possibility to understand:
 To answer those questions we will perform an **Exploratory Data Analysis (EDA)** applying the next skills:
 
 - R (functional) programming with **base R**
-- Missing values exploration with **naniar**
+- Web scraping with **rvest**
 - Data manipulation with **data.table**, **lubridate** and **stringr**
 - Static data visualization with **ggplot2**, **scales**, **forcats** and **patchwork**
 - Network visualization with **igraph** and **ggraph**
@@ -42,8 +42,7 @@ To answer those questions we will perform an **Exploratory Data Analysis (EDA)**
 
 # 1. Enveroment set-up
 
-To set up the environment we will use to create the report we just need to 
-follow the next steps:
+To set up the environment we will use to create the report we just need to follow the next steps:
 
 </br>
 
@@ -61,7 +60,6 @@ library(data.table)
 library(lubridate)
 library(stringr)
 library(countrycode)
-library(naniar)
 library(flextable)
 library(ggplot2)
 library(scales)
@@ -199,15 +197,13 @@ plot_chr_count <- function(DATA,
 
 # 2. Tidying data
 
-As most data in the world this data needs some transformations facilitate it's
-exploration.
+As most data in the world this data needs some transformations facilitate it's exploration.
 
 </br>
 
 ## 2.1. Data quality evaluation
 
-To start this process, let's summary the influence of `protest` variable across
-the missing values in each variable.
+To start this process, let's summary the influence of `protest` variable across the missing values in each variable.
 
 ```{r , fig.dim = c(14,10)}
 
@@ -263,9 +259,7 @@ By checking the last chart we can see that:
 
 </br>
 
-**Problem 1:** Only **`r percent(ProtestRaw[, mean(protest == 0)], accuracy = 1)` rows** in the data represent a country and year where there wasn't protest recorded.
-Rows without protests have to many missing values and it makes same, as most of 
-the variables in data give information assuming there were a protest.
+**Problem 1:** Only **`r percent(ProtestRaw[, mean(protest == 0)], accuracy = 1)` rows** in the data represent a country and year where there wasn't protest recorded. Rows without protests have to many missing values and it makes same, as most of  the variables in data give information assuming there were a protest.
 
 **Solution:** We will take out all the rows that don't have protest related. 
 
@@ -282,8 +276,7 @@ the variables in data give information assuming there were a protest.
 
 **Solution:** We will use `participants` variable to complete `participants_category`'s values. 
 
-`participants` is also a categorical variable with **`r ProtestRaw[, uniqueN(participants)] |> comma()` unique values**, but only **`r ProtestRaw[protest == 1, mean(is.na(participants))] |> percent(accuracy = 0.01)` of its rows** are missing. Bellow we can see some examples of how 
-`participants_category` and `participants` are related.
+`participants` is also a categorical variable with **`r ProtestRaw[, uniqueN(participants)] |> comma()` unique values**, but only **`r ProtestRaw[protest == 1, mean(is.na(participants))] |> percent(accuracy = 0.01)` of its rows** are missing. Bellow we can see some examples of how `participants_category` and `participants` are related.
 
 ```{r}
 set.seed(14)
@@ -305,10 +298,7 @@ copy(ProtestRaw)[is.na(`participants_category`) &
 
 ```
 
-As we can see `participants` can have only words, number of number ranges almost
-all related to indicate the number of participants in each protest, but is less
-exact than `participants_category`, the best alternative is to complete the missing
-values of `participants_category` based on `participants`.
+As we can see `participants` can have only words, number of number ranges almost all related to indicate the number of participants in each protest, but is less exact than `participants_category`, the best alternative is to complete the missing values of `participants_category` based on `participants`.
 
 </br>
 
@@ -372,13 +362,20 @@ ProtestFilteredWithDates[is.na(participants_category)
     
   # Getting number of protesters by using regular expressions
   ][participants %like% "^\\d+$" & is.na(participants_clean),
-    participants_clean := as.double(participants)
+    participants_clean := 
+      as.double(participants)
   ][participants %like% "^\\d+\\+$" & is.na(participants_clean),
-    participants_clean := str_remove_all(participants,"\\+") |> as.double()
+    participants_clean := 
+      str_remove_all(participants,"\\+") |> 
+      as.double()
   ][participants %like% "^\\d+s" & is.na(participants_clean),
-    participants_clean := str_match(participants,"^(\\d+)s")[,2] |>  as.double()
+    participants_clean :=
+      str_match(participants,"^(\\d+)s")[,2] |>  
+      as.double()
   ][participants %like% "^[><]\\d+" & is.na(participants_clean),
-    participants_clean := str_match(participants,"^[><](\\d+)")[,2] |> as.double()
+    participants_clean := 
+      str_match(participants,"^[><](\\d+)")[,2] |>
+      as.double()
     
   # Getting number of protesters by reading the notes variable
   ][id == 922006004, 
@@ -415,8 +412,7 @@ ProtestFilteredWithDates[is.na(participants_category)
 
 </br>
 
-After cleaning the variables we are ready to reshape the data to a longer format
-and solve the **problem 4**.
+After cleaning the variables we are ready to reshape the data to a longer format and solve the **problem 4**.
 
 ```{r}
 
@@ -507,60 +503,105 @@ ProtestCleanTidy[id == sample(id, 1),
 
 # 3. Adding new variables
 
-Some 
+To get the best result in the data exploration part could be important to transform the data to get some new figure that can make easier to find some interesting relations.
+
+</br>
+
+## 3.1. Adding time fetures
+
+Each protest has a time range and I think it would interesting to know:
+
+- How long was each protest?
+- Did the protest took place during a weekend?
+- Did the protest took place during a holiday?
+
+To extract that information we will need to apply some data manipulations and to answer the last one we need to get some information from a web page by using web scraping techniques as follow.
 
 ```{r}
 
-
-HolidaysHomePage <- 
+# Getting the link to each country holidays table
+HolidaysHomePageTable <- 
   read_html("https://www.officeholidays.com/countries") |>
-  html_elements(xpath = '//li/a[i[starts-with(@class,"sprite")]]')
-
-HolidaysHomePageTable <-
-  data.table(
-  country = html_text(HolidaysHomePage) |>
-    str_match("\\w.+\\w$")|>
-    as.vector(),
-  link = html_attr(HolidaysHomePage,"href")
-  )[country %chin% unique(ProtestCleanTidy[["country"]])]
+  html_elements(xpath = '//li/a[i[starts-with(@class,"sprite")]]') |>
+  (\(x) data.table(country = html_text(x) |>
+                     str_match("\\w.+\\w$")|>
+                     as.vector(),
+                   link = html_attr(x,"href")
+        )[country %chin% unique(ProtestCleanTidy[["country"]])])()
 
 
-# I tried to use lappy but it was just return NULL values in the list
+# Saving the table of each continent in a list
+# lapply didn't work for some reason
+NumberCountrytoScrap <- nrow(HolidaysHomePageTable)
+ListToFill <- vector("list", length = NumberCountrytoScrap)
 
-ListToFill <- vector(mode = "list")
-
-for(i in seq_len(nrow(HolidaysHomePageTable))){
+for(i in seq_len(NumberCountrytoScrap)){
   
-  ListToFill <-
-    append(
-      ListToFill,
-      list(read_html(HolidaysHomePageTable[["link"]][i]) |>
-             html_table(header = TRUE) |>
-             (\(LIST) as.data.table(LIST[[1]]))() |>
-             (\(DT) DT[, country := 
-                         HolidaysHomePageTable[["country"]][i]][])())
-           )
+  ListToFill[[i]] <-
+    read_html(HolidaysHomePageTable[["link"]][i]) |>
+    html_table(header = TRUE) |>
+    (\(LIST) as.data.table(LIST[[1]])[,c("Date")])() |>
+    (\(DT) DT[, country := 
+                HolidaysHomePageTable[["country"]][i]][])()
   
-  Sys.sleep(1)
+  Sys.sleep(0.5)
 }
 
 
-CountriesHolidaysTable <-
-  rbindlist(ListToFill, fill = TRUE, use.names = TRUE
-  )[, c("country","Date","Holiday Name", "Type","Comments")
-  ][, id := .I
-  ][, .SD[CJ(id = id,
-             year = min(ProtestCleanTidy[["year"]]):max(ProtestCleanTidy[["year"]])),
-          on = "id"]
+# Saving the information as a table and page just shows the
+# holidays of each country in the current year need to repeat
+# each day in each year of the data
+CountriesHolidays <-
+  rbindlist(ListToFill, use.names = TRUE
+  )[, id := .I
+  ][CJ(id = id,
+       year = range(ProtestCleanTidy[["year"]]) |> (\(x) x[1]:x[2])()),
+    on = "id"
   ][, `:=`(Date = str_c(year," ",Date),
+           during_holiday = TRUE,
            id = NULL,
            year = NULL)
   ][, Date := ymd(Date)]
 
+```
+
+</br>
+
+After getting the holidays we have all we need to the create the variable with the next code.
+
+```{r}
+
+ProtestTidyDates <-
+  
+  # Selecting just critical columns to use less memory
+  ProtestCleanTidy[, unique(.SD),
+                 .SDcols = c("id","country","start_date","end_date")
+                 
+  # Calculate protest duration
+  ][, duration := difftime(end_date, start_date,
+                            units = "days") |> as.double()+1
+  
+  # Getting a row of day of each protest so DT gets longer
+  ][, .(Date = seq.Date(start_date,  end_date, by = "day")),
+    by = c("id","country","duration")
+    
+  # Testing weekends and holidays each day
+  ][, during_weekend := wday(Date) %in% c(1,7)
+  ][, merge(.SD, CountriesHolidays,
+            by = c("country","Date"), all.x = TRUE)
+  ][country %chin% CountriesHolidays[, unique(country)], 
+    during_holiday := FALSE
+  
+  # Taking the data back to the original format
+  ][,.(during_weekend = sum(during_weekend) > 0,
+       during_holiday = sum(during_holiday) > 0),
+    by = c("id","duration")
+  ][ProtestCleanTidy, on = "id"]
 
 ```
 
 
+## 3.2. Adding political information
 
 
 
@@ -652,94 +693,5 @@ ggraph(UKgraph, layout = "with_fr")+
         legend.title = element_text(face = "bold", size = 15),
         legend.text = element_text(size = 15),
         plot.title = element_text(face = "bold", size = 20, hjust = 0.5))
-
-```
-
-# 3. More plots
-
-```{r, fig.dim = c(14,10)}
-
-plot_chr_count(DATA = ProtestCleanTidy,
-               id_var = "id",
-               group_var = "country",
-               plot_fill_var = "continent",
-               plot_title = "Total of protests per country",
-               plot_max = 40,
-               use_cumulative_sum = FALSE)+
-  labs(subtitle = " ")+
-  facet_wrap(~continent, scales = "free_y")+
-  theme(legend.position = "none")
-
-```
-
-
-As we can see in the chart most of the protests occurs in **`r levels(ProtestCleanTidy$continent)[1]`** and  **`r levels(ProtestCleanTidy$continent)[2]`**.
-
-As this data have information of protests between *`r ProtestCleanTidy[, min(year)]`* and *`r ProtestCleanTidy[, max(year)]`* let's see how the number of protests change each year for each continent.
-
-```{r, fig.align='center', fig.dim = c(10,6)}
-
-continent_count_year_plot <-
-ProtestCleanTidy[, .(number_protest = uniqueN(id)),
-                  .(continent, year)] |>
-  SharedData$new(key = ~continent, group = "Select a continent") |>
-  ggplot(aes(year, number_protest, color = continent))+
-  geom_line(size = 1)+
-  geom_point(size = 2)+
-  scale_y_continuous(breaks = breaks_width(50))+
-  scale_x_continuous(breaks = breaks_width(2))+
-  labs(title = "Number of Protests per Continent and Year",
-       x = "Year", y = "Number of Protests", color = "Continent")+
-  theme(plot.title = element_text(color = "black", face = "bold"))
-
-  ggplotly(continent_count_year_plot) |>
-    highlight(on = 'plotly_click',
-              off = 'plotly_doubleclick')
-
-```
-
-At first view, we can see that *2020* isn't a normal year as countries have less protests that year than any other year in the past. That abnormality makes sense when we check that he last date in data is ***`r ProtestCleanTidy[,max(c(start_date,end_date))] |> format("%m/%d/%y")`***.
-
-Checking each individual Continent by clicking over each one we can see:
-
-- **Europe:** Only *`r continent_count_year_plot$data[continent == "Europe",  mean(number_protest > 150)|> percent()]`* of years have more than 150 per year and would be interesting to under why was the people protesting in **1990**, **1996-1997** and **2013-2019**.
-
-- **Asia:** The number of protests per year increased from less than 100 protests per year to 159 between **1997 and 2000**, then between **2005 and 2006** and 3 high picks in **2011**, **2014** and **2019**.
-
-- **Africa:** The number of protest had a pick in **2005**, an increase tendency between **2010 and 2012**, two important picks in **2015** and **2019**.
-
-- **America:** It has to important picks in **2015** and **2019**.
-
-- **Oceania:** It just have two picks of 5 protest in **2001** and **2005**.
-
-```{r, fig.align='center', fig.dim = c(10,6)}
-
-ProtestCleanTidy[continent == "Europe", 
-                  .(number_protest = uniqueN(id)),
-                  .( country, year)] |>
-  ggplot(aes(number_protest))+
-  geom_histogram(bins = 20)+
-  scale_x_log10(breaks = 2^(1:7) |> round())
-
-
-EUR_count_year_plot <-
-ProtestCleanTidy[continent == "Europe", 
-                  .(number_protest = uniqueN(id)),
-                  .( country, year)
-  ][, number_protest_max := max(number_protest), country
-  ][number_protest_max >= 30] |>
-  SharedData$new(key = ~country, group = "Select a continent") |>
-  ggplot(aes(year, number_protest, color = country))+
-  geom_line(size = 1)+
-  geom_point(size = 2)+
-  scale_y_continuous(breaks = breaks_width(10))+
-  scale_x_continuous(breaks = breaks_width(2))+
-  labs(title = "Number of Protests per Country and Year",
-       x = "Year", y = "Number of Protests", color = "Continent")+
-  theme(plot.title = element_text(color = "black", face = "bold"))
-
-  ggplotly(EUR_count_year_plot) |>
-    highlight(on = 'plotly_click',
-              off = 'plotly_doubleclick')
 
 ```
