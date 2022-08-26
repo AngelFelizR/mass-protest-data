@@ -101,6 +101,22 @@ style_table <- function(DATA){
   
 }
 
+# We will use this style to show data frames.
+
+read_country_index <- function(path){
+  
+  fread(path,
+        header = TRUE, skip = 2, 
+        drop = c("Indicator Code","Country Code")
+  )[, melt(.SD, 
+           id.vars = c("Country Name","Indicator Name"),
+           variable.factor = FALSE,
+           na.rm = TRUE,
+           value.name = "Index", variable.name = "Year"),
+    .SDcols = !is.logical]
+  
+}
+
 
 # Creates a bar plot by counting unique number of id_var 
 # for categories included in group_var and plot_fill_var. 
@@ -517,7 +533,7 @@ Each protest has a time range and I think it would interesting to know:
 
 To extract that information we will need to apply some data manipulations and to answer the last one we need to get some information from a web page by using web scraping techniques as follow.
 
-```{r}
+```{r, eval=FALSE}
 
 # Getting the link to each country holidays table
 HolidaysHomePageTable <- 
@@ -565,6 +581,10 @@ CountriesHolidays <-
 
 ```
 
+```{r include=FALSE}
+CountriesHolidays <- fread("Raw-data/countries-holidays.csv")
+```
+
 </br>
 
 After getting the holidays we have all we need to the create the variable with the next code.
@@ -602,6 +622,36 @@ ProtestTidyDates <-
 
 
 ## 3.2. Adding political information
+
+Many protests start for economic reasons that affect society in each country. To measure that we can use two indicators from **The World Bank**. The first one is the [GDP per capita (current US$)](https://data.worldbank.org/indicator/NY.GDP.PCAP.CD?most_recent_year_desc=true) to measure how much money people have and [Gini index](https://data.worldbank.org/indicator/SI.POV.GINI?most_recent_year_desc=true) to measure that money is distributed.
+
+```{r}
+
+CountryIncomeGroup <-
+  fread("Raw-data/country-income-classification.csv",
+        header = TRUE, 
+        select = c("TableName","IncomeGroup")
+  )[! IncomeGroup %like% "\\w", 
+    IncomeGroup := NA_character_]
+
+CountryIndex <-
+  c("Raw-data/GDP-PCAP.csv",
+    "Raw-data/GINI-INDEX.csv") |>
+  lapply(read_country_index) |> 
+  rbindlist() |>
+  dcast(`Country Name`+ Year ~ `Indicator Name`, 
+        value.var = "Index")
+
+ProtestTidyDatesIndex <-
+  CountryIndex[CountryIncomeGroup, 
+               on = c("Country Name" = "TableName")
+  ][, Year := as.integer(Year)
+  ][ProtestTidyDates,
+    on = c("Country Name" = "country",
+           "Year" = "year")]
+
+
+```
 
 
 
@@ -642,7 +692,7 @@ ggcorrplot(cor(DemandsMatrix),
 
 In next chart we can see that the countries with more protests comes from Europe. Together, they sum 12.6% of protest in the data. Let's focus in those countries and try to answer some questions.
 
-```{r}
+```{r eval=FALSE, include=FALSE}
 
 EuropeMissingCountries <-  
 c("Yugoslavia", "Serbia and Montenegro",
@@ -659,7 +709,7 @@ plot_chr_count(DATA = ProtestCleanTidy,
 
 ## 2.2. UK Graph Analysis
 
-```{r, fig.dim = c(14,10)}
+```{r eval=FALSE, fig.dim=c(14,10), include=FALSE}
 
 UKEdges <-
   ProtestCleanTidy[action_occur == TRUE & action_source == "protester_demand"
