@@ -70,6 +70,8 @@ library(ggraph)
 library(plotly)
 library(crosstalk)
 library(ggcorrplot)
+library(correlation)
+library(see)
 library(rvest)
 
 theme_set(theme_light())
@@ -101,14 +103,16 @@ style_table <- function(DATA){
   
 }
 
-# We will use this style to show data frames.
+# We will use function to read some csv files
+# with information from World Bank
 
 read_country_index <- function(path){
   
   fread(path,
         header = TRUE, skip = 2, 
         drop = c("Indicator Code","Country Code")
-  )[, melt(.SD, 
+  )[, lapply(.SD, function(x) if(is.integer(x)){as.double(x)}else{x})
+  ][, melt(.SD, 
            id.vars = c("Country Name","Indicator Name"),
            variable.factor = FALSE,
            na.rm = TRUE,
@@ -435,12 +439,14 @@ After cleaning the variables we are ready to reshape the data to a longer format
 ProtestCleanTidy <-
   
   # Melting protesterdemand and stateresponse just keeping protest id
-  ProtestClean[, melt(.SD, 
-                    id.vars = "id",
-                    measure.vars = str_subset(names(.SD),
-                                              "^protesterdemand|^stateresponse"),
-                    value.name = "actions",
-                    variable.factor = FALSE)
+  copy(ProtestClean)[, protesterdemand5 := fifelse(protesterviolence == 1 ,"violence",
+                                                   NA_character_)
+  ][, melt(.SD, 
+           id.vars = "id",
+           measure.vars = str_subset(names(.SD),
+                                     "^protesterdemand|^stateresponse"),
+           value.name = "actions",
+           variable.factor = FALSE)
   ][!is.na(actions) & actions %like% "\\w"
   ][, variable := fifelse(variable %like% "^protesterdemand", 
                           "protester_demand","state_response")
@@ -450,8 +456,8 @@ ProtestCleanTidy <-
     
   # Adding ids that don't have either protester_demand or state_response
   # and adding actions that didn't happen in each protest
-  ][, `:=` (action_occur = TRUE,
-            actions = str_c(variable," - ",actions))
+  ][, `:=`(action_occur = TRUE,
+           actions = str_c(variable," - ",actions))
   ][, !c("variable")
   ][, merge(.SD,
             CJ(id = unique(ProtestClean$id),
@@ -461,8 +467,10 @@ ProtestCleanTidy <-
   ][, c("action_source", "actions") := tstrsplit(actions, split = " - ", fixed = TRUE)
     
   # Adding the other variables to have back the data complete
-  ][, merge(.SD, ProtestClean, by = "id", all = TRUE)
+  ][, merge(.SD, ProtestClean[, !c("protesterviolence")],
+            by = "id", all = TRUE)
   ][, .SD, .SDcols = !patterns("^protesterdemand|^stateresponse")]
+
 
 ```
 
@@ -642,51 +650,56 @@ CountryIndex <-
   dcast(`Country Name`+ Year ~ `Indicator Name`, 
         value.var = "Index")
 
-ProtestTidyDatesIndex <-
+
+EuropeMissingCountries <-  
+  c("Yugoslavia", "Serbia and Montenegro",
+    "Kosovo","Germany East","Czechoslovakia")
+
+
+ProtestTidy <-
   CountryIndex[CountryIncomeGroup, 
                on = c("Country Name" = "TableName")
   ][, Year := as.integer(Year)
   ][ProtestTidyDates,
     on = c("Country Name" = "country",
-           "Year" = "year")]
+           "Year" = "year")
+  ][, setnames(.SD,"Country Name","country")
+  ][!country %chin% EuropeMissingCountries, 
+    continent := countrycode(country, 
+                             origin = "country.name",
+                             destination = "continent")
+  ][country %chin% EuropeMissingCountries, 
+    continent := "Europe"]
 
 
 ```
-
 
 
 # 2. Data exploration
 
-```{r eval=FALSE, include=FALSE}
+```{r}
+#g <-
+  copy(ProtestTidy)[,`:=`(action_occur = as.double(action_occur),
+                          actions = paste0(fifelse(action_source %like% "^p",
+                                                   "P - ", "S - "),
+                                           actions))
+  ][country  == "Haiti", 
+    dcast(.SD, id ~ actions, value.var = "action_occur")
+  ][, !c("id")] |>
+  correlation() |>
+  summary() |>
+  plot()+
+  theme(axis.text.x = element_text(angle = 90, size = 14),
+        axis.text.y = element_text(size = 14))
 
-StateReponseMatrix <-
-  ProtestCleanTidy[action_source == "state_response"
-  ][, action_occur := as.double(action_occur)
-  ][, dcast(.SD, id ~ actions, value.var = "action_occur")
-  ][, !c("id")]
-
-ggcorrplot(cor(StateReponseMatrix),
-           hc.order = TRUE,
-           type = "upper",
-           lab = TRUE,
-           p.mat = cor_pmat(StateReponseMatrix)) +
-  labs(title = "TITLE TEST")
-
-
-DemandsMatrix <-
-  ProtestCleanTidy[action_source == "protester_demand"
-  ][, action_occur := as.double(action_occur)
-  ][, dcast(.SD, id ~ actions, value.var = "action_occur")
-  ][, !c("id")]
-
-ggcorrplot(cor(DemandsMatrix),
-           hc.order = TRUE,
-           type = "upper",
-           lab = TRUE,
-           p.mat = cor_pmat(DemandsMatrix)) +
-  labs(title = "TITLE TEST")
+ProtestTidy[actions == "accomodation",
+                      .(pct_accomodation = mean(action_occur)),
+                      .(participants_range, country)] |>
+  lm(formula = pct_accomodation ~ participants_range) |>
+  moderndive::get_regression_table()
 
 ```
+
 
 ## 2.1. Which country have more protests?
 
@@ -694,9 +707,7 @@ In next chart we can see that the countries with more protests comes from Europe
 
 ```{r eval=FALSE, include=FALSE}
 
-EuropeMissingCountries <-  
-c("Yugoslavia", "Serbia and Montenegro",
-  "Kosovo","Germany East","Czechoslovakia")
+
 
 plot_chr_count(DATA = ProtestCleanTidy,
                id_var = "id",
