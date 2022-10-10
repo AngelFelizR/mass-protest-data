@@ -9,12 +9,16 @@ output:
     theme: united
     toc: true
     toc_float:
-      collapsed: false
+      collapsed: true
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, 
                       fig.align = "center", fig.dim = c(12,8))
+
+## Establishing render conditions 
+run_fast <- TRUE
+FALSE <- !(run_fast)
 ```
 
 # Motiviation to create the proyect
@@ -65,7 +69,6 @@ library(flextable)
 library(ggplot2)
 library(scales)
 library(forcats)
-theme_set(theme_light())
 
 library(igraph)
 library(ggraph)
@@ -143,6 +146,20 @@ style_table <- function(df){
 
 ```
 
+- **custom_theme:** Defines the style of all ggplots across the project.
+
+```{r}
+custom_theme <-
+theme_light()+
+  theme(axis.text = element_text(size = 15),
+        axis.title = element_text(size = 16, face = "bold"),
+        strip.text = element_text(size = 16, face = "bold"),
+        plot.title = element_text(size = 25, face = "bold", 
+                                  hjust = 0.5, margin = margin(b = 15)))
+
+theme_set(custom_theme)
+
+```
 
 ## 1.3. Data importation
 
@@ -201,17 +218,22 @@ pillar::glimpse(CountryCities)
 
 ```
 
-- **CountryCode:** It has all possible country codes that the `ProtestRaw` could have to define which country.
+- **CountryCode:** It has all possible country codes that the `ProtestRaw` could have used in the `ccode` column with country name and country regular expression.
 
 ```{r country-codes}
 
 CountryCode <-
   countrycode::codelist_panel |>
   as.data.table() |>
-  (\(DT) DT[, .SD, 
+  (\(DT) DT[year >= min(ProtestRaw$year), 
+            .SD, 
             .SDcols= c("country.name.en",
                        "country.name.en.regex",
-                       names(DT)[sapply(DT, is.double)])] )()
+                       names(DT)[sapply(DT, is.double)])
+         # Germany, West correction 
+         # from Raw-data/p5manualv2018.pdf and Raw-data/polityiv_manual.pdf
+         ][country.name.en == "Germany" & year == 1990,
+           c("p4n","p5n") := 260] )()
 
 pillar::glimpse(CountryCode)
 
@@ -234,7 +256,7 @@ pillar::glimpse(Polity4)
 
 ```
 
-```{r include=FALSE}
+```{r eval=run_fast, include=FALSE}
 
 # fwrite(CountryCapital,"Raw-data/Country-Capital.csv")
 # fwrite(CountryCities,"Raw-data/Country-Cities.csv")
@@ -253,26 +275,11 @@ Polity4 <-
 
 # 2. Data understanding
 
-Once we have all the data in R we can start to check the information that contains each column of `ProtestRaw`, as there is no documentation related to the main data we need to check if the columns really have what we think after reading each title.
+Before starting the cleaning process itself we need to understand some general characteristics of data. This step it's crucial in order to know *how to interpret the data* and *what cleaning step are needed*.
 
 ## 2.1. Checking columns' meaning
 
-Before staring the cleaning process itself we need to understand some general characteristics of data. This step it's crucial in order to know *how to interpret the data* and *what cleaning step are needed*.
-
-Let's see in summary what type of variables holds `ProtestRaw`.
-
-```{r varaible-type-summary}
-
-ProtestRaw |>
-  sapply(typeof) |>
-  str_to_sentence() |>
-  table() |>
-  (\(x) c(x,"Total" = sum(x)))() |>
-  as.list() |>
-  as.data.table() |>
-  style_table()
-
-```
+Once we have all the data in R we can start to check the information that contains each column of `ProtestRaw`, as there is no documentation related to the main data we need to check if the columns really have what we think after reading each title:
 
 - **id** shares an unique number for each row. And we see the test bellow.
 
@@ -293,76 +300,93 @@ ProtestRaw[,.(`Number of Countries` = uniqueN(country))] |>
 
 ```
 
-- **ccode** provides a code reference for each country. Most of the countries has one `ccode`, but some change over time as we can see bellow.
+- **ccode** provides a code reference for each country. By making a simple check we can confirm that a country can have more than one code depending of the protest `year`, as we can see bellow.
 
 ```{r ccode-year-change}
 
 ProtestRaw[order(year), 
-           .SD[uniqueN(ccode) > 1] |> unique(by = "ccode"),
+           .SD[uniqueN(ccode) > 1],
            by = "country",
-           .SDcols = c("ccode","year")] |>
+           .SDcols = c("ccode","year")
+  ][, unique(.SD,by = "ccode")] |>
   style_table()
 
 ```
 
-Let's the `countrycode` package to find out the `ccode` source. The first step is to select all country codes related to a country name or country regular expression save it as a data.table object.
+As we don't know which rule is following the code let's use the data provided by the `countrycode` package to find out the `ccode` source. To make data that we need to perform a join operation in two parts by starting with countries that have the same name and year in both data frames.
 
-```{r country-code-selection}
-
-CountryCode[country.name.en == "Ethiopia" &
-                year %between% c(1992,1995),
-              c("country.name.en","country.name.en.regex",
-                "year","p4n", "fao" ,"imf", "un")] |>
-  style_table()
-
-```
-
-Now it's time to check which of the possible country code sources from the `countrycode` package match with country codes stored in the `ProtestRaw` data. To make data that we need to perform a join operation, but no all countries have the same names in both tables so we will need to join first the countries that have the same name in both table and math the rest based on regular expressions and bind both joins in a single table and applying a simple anti join we can check that the merge has all countries and years of our original dataset.
-
-```{r county-name-join}
+```{r ccode-exact-match}
 
 CountryCodeExactMatch <-
   CountryCode[ProtestRaw[, unique(.SD), 
-                           .SDcols = c("country","ccode","year")],
+                         .SDcols = c("country","ccode","year")],
                 on = c("country.name.en" = "country", "year"),
                 nomatch = 0]
 
+```
+
+To perform the join operation with the missing countries we need to apply a more complex approach by applying the following steps :
+
+1. Selecting the countries that wasn't found using a exact match
+2. Creating a table with all possible combinations between missing countries and regular expressions provided by `countrycode` package 
+3. Selecting rows that match the regular expression
+4. Adding possible country codes and years by regular expression
+5. Selecting rows with the same country and year as `ProtestRaw`
+
+```{r ccode-regex-match}
+
 CountryCodeRegexMatch <-
-ProtestRaw[! country %chin% CountryCodeExactMatch$country.name.en, 
-           .(country = unique(country))
+  
+    # Selecting the countries that wasn't found using a exact match
+    ProtestRaw[! country %chin% CountryCodeExactMatch$country.name.en, 
+               .(country = unique(country))
+
+    # Creating country and regex combinations
     ][, CJ(country = country,
            country.name.en.regex = CountryCode$country.name.en.regex,
            unique = TRUE)
+      
+    # Selecting regex that match with countries' names
     ][, match_text := str_detect(str_to_lower(country),country.name.en.regex),
       by = .I
-    ][order(-match_text),
-      unique(.SD, by = "country")
-    ][, merge(.SD, CountryCode,  by = "country.name.en.regex", all.x = TRUE),
-      .SDcols = c("country.name.en.regex","country")
+    ][match_text == TRUE,
+      unique(.SD, by = "country"),
+      .SDcols = c("country", "country.name.en.regex")
+
+    # Adding possible country codes and years by regular expression
+    ][CountryCode, on = "country.name.en.regex", nomatch = 0
+
+    # Selecting rows with the same country and year as ProtestRaw
     ][ProtestRaw[, unique(.SD), .SDcols = c("country","ccode","year")],
       on = c("country", "year"), nomatch = 0
     ][, `:=`(country.name.en = country,
              country = NULL)]
 
+```
+
+All applying all this steps we just need to bind both data frames and confirm if we found all possible country codes for every country list in `ProtestRaw`.
+
+```{r ccode-match-result}
+
 CountryCodeMerged <-
   rbind(CountryCodeExactMatch,
         CountryCodeRegexMatch)
 
-  # Checking it was any country and year that wasn't found
-  ProtestRaw[, c("country","year")
-  ][!CountryCodeMerged, 
-    on = c("country" = "country.name.en","year")] |>
-    (\(x) data.table(`Missing Rows` = nrow(x)))() |>
-    style_table()
+# Checking it was any country and year that wasn't found
+ProtestRaw[, c("country","year")
+][!CountryCodeMerged, 
+  on = c("country" = "country.name.en","year")] |>
+  (\(x) data.table(`Missing Rows` = nrow(x)))() |>
+  style_table()
 
 ```
 
-Now we can compare which country code is using the `ProtestRaw` to indentify each country.
+Great, now we can use `CountryCodeMerged` to identify which code source match better with the `ccode`.
 
 ```{r}
 
-CountryCodeMerged[, !c("year")
-  ][, unique(.SD)
+CountryCodeMerged[, unique(.SD),
+                  .SDcols = !patterns("^year$")
   ][, sapply(.SD, \(x) mean(x == ccode, na.rm = TRUE))] |>
   sort(decreasing = TRUE) |>
   (\(x) x[names(x)!="ccode" & seq_along(x) < 8])() |>
@@ -373,9 +397,9 @@ CountryCodeMerged[, !c("year")
 
 ```
 
-As we can see in the table above the country code source with more matching codes is the [Polity IV Project](http://home.bi.no/a0110709/polityiv_manual.pdf) which monitor regime change and study the effects of regime authority worldwide. This open the door to add more features to our in other stages of project, but first it is important to understand why some the `p4n` didn't match with the original `ccode`.
+As we can see in the table above the country code source with more matching codes is the [Polity IV Project](http://home.bi.no/a0110709/polityiv_manual.pdf) which monitor regime change and study the effects of regime authority worldwide. This open the door to add more features to our main data, but first it is important to understand why some the `p4n` didn't match with the original `ccode`.
 
-The *first group* is the one that has a `p4n` the value but it is different to the `ccode` during some years, as you can see bellow. We will correct the `ccode` in those cases during this project.
+The **first group** is the one that has a `p4n` the value but it is different to the `ccode` during some years, as you can see bellow. We will correct the `ccode` in those cases during this project.
 
 ```{r checking-wrong-code}
 
@@ -387,7 +411,7 @@ CountryCodeMerged[p4n != ccode,
 
 ```
 
-The *second group* correspond to the years when the bellow countries didn't have a `p4n` assign, so we will remand the code that was given by `ccode`.
+The **second group** correspond to the years when the bellow countries didn't have a `p4n` assign, so we will remand the code that was given by `ccode`.
 
 ```{r checking-missing-code}
 
@@ -483,7 +507,7 @@ ProtestRaw[, .N, participants_category]|>
 
 ```
 
-- The 4 **protesterdemand** columns have 7 categories to define protesters' requests.
+- The **4 protesterdemand** columns have 7 categories to define protesters' requests.
 
 ```{r protesterdemand-check}
 
@@ -497,7 +521,7 @@ ProtestRaw[, .N, participants_category]|>
 
 ```
 
-- The 7 **stateresponse** columns have 7 categories to define States' responses. By checking the table bellow we can see that *accommodation* was misspelled as *accommodation* which also the attribute that we want to understand.
+- The **7 stateresponse** columns have 7 categories to define States' responses. By checking the table bellow we can see that *accommodation* was misspelled as *accomodation* which also the attribute that we want to understand.
 
 ```{r stateresponse-check}
 
@@ -511,7 +535,7 @@ ProtestRaw[, .N, participants_category]|>
 
 ```
 
-- **notes** has a paragraph that describes each protest. The average number of words for each paragraph is 98 words which is higher than median so there are some outliers with very long paragraphs.
+- **notes** has a paragraph that describes each protest. The average number of words for each paragraph is ***98 words*** which is higher than median so there are some outliers with very long paragraphs.
 
 ```{r notes-check}
 
@@ -526,7 +550,7 @@ ProtestRaw[notes %like% "\\w",
 
 ```
 
-- **sources** has a paragraph that describes where the is information is coming from. The average number of words for each paragraph is 34 words which is higher than median so there are some outliers with very long paragraphs.
+- **sources** has a paragraph that describes where the is information is coming from. The average number of words for each paragraph is ***34 words*** which is higher than median so there are some outliers with very long paragraphs.
 
 ```{r sources-check}
 
@@ -562,12 +586,7 @@ ProtestRaw[, lapply(.SD, function(x) x |> is.na() |> mean()),
   scale_x_continuous(labels = percent_format(accuracy = 1))+
   facet_wrap(~protest)+
   labs(title = "Proportions of missing values per variable",
-       x = "% Of Missing Values")+
-  theme(axis.text = element_text(size = 15),
-        axis.title = element_text(size = 16, face = "bold"),
-        strip.text = element_text(size = 16, face = "bold"),
-        plot.title = element_text(size = 25, face = "bold", 
-                                  hjust = 0.5, margin = margin(b = 15)))
+       x = "% Of Missing Values")
 
 ```
 
@@ -612,6 +631,7 @@ ProtestSimpleClean <-
 
 ## 3.2. Completing participants_category with participants column
 
+AQUI FALTA TEXTO
 
 ```{r data-wrangling}
 
@@ -777,12 +797,7 @@ than 5% of missing values.
   scale_x_continuous(labels = percent_format(accuracy = 0.01))+
   expand_limits(x = 1)+
   labs(title = "Proportions of missing\nvalues per variable",
-       x = "% Of Missing Values")+
-  theme(axis.text = element_text(size = 15),
-        axis.title = element_text(size = 16, face = "bold"),
-        strip.text = element_text(size = 16),
-        plot.title = element_text(size = 25, face = "bold",
-                                  hjust = 0.5, margin = margin(b = 40)))
+       x = "% Of Missing Values")
 
 ```
 
