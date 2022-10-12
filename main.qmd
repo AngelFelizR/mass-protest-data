@@ -1,33 +1,35 @@
 ---
 title: "Characteristics of Successful Protests"
 author: "Angel Feliz"
-date: "`r format(Sys.Date(),'%d %B %Y')`"
-output: 
-  html_document:
-    css: styles.css
-    highlight: tango
-    theme: united
+date: "11 October 2022"
+execute:
+  echo: true
+  message: false
+  warning: false
+format: 
+  html:
+    fig-width: 12
+    fig-height: 8
+    fig-align: "center"
     toc: true
-    toc_float:
-      collapsed: true
+    toc-title: Index
+    toc-location: left
+    self-contained: true
+    number-sections: true
+    smooth-scroll: true
 ---
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, 
-                      fig.align = "center", fig.dim = c(12,8))
+<style>
+code{color: #0c5bd1;}
+</style>
 
-## Establishing render conditions 
-run_fast <- TRUE
-#FALSE <- !(run_fast)
-```
-
-# Motiviation to create the proyect
+# Motiviation to create the proyect {.unnumbered .unlisted}
 
 As data scientist aspirant I was trying to find an interesting dataset which I can use to practice and share what I have learnt so far, when I found out that Datacamp has a [Github repository](https://github.com/datacamp/careerhub-data) with many uncleaned datasets to that I could use.
 
 I saw the folder [Mass Protest Data](https://github.com/datacamp/careerhub-data/tree/master/Mass%20Protest%20Data) very interesting as it describes protests from 1990 to 2020 worldwide. I understand that protests are important to the society and it would be interesting to check what can we learn from this dataset.
 
-# Introduction
+# Introduction {.unnumbered}
 
 The goal of the blog is to define what characteristics share successful protests worldwide and the first step to achieve that it is to define what do I mean with **successful**. As most the protests demand state actions _I consider that a **protest is successful** when there is a reconciliation between the two parts_.
 
@@ -42,11 +44,11 @@ To make that possible we will apply the next skills during the process:
 - **Automated reporting** with *rmarkdown*, *flextable*, *html* and *css*
 
 
-# 1. Enveroment set-up
+# Enveroment set-up
 
 Before starting the find insights from data it's needed to load in R the functions and the data that we will use during the process
 
-## 1.1. Libraries importantion
+## Libraries importantion
 
 This first step of the process is to install and load all the libraries to avoid writing the function with the structure `PackageName::FunctionName()` if are going to use many functions of a library.
 
@@ -70,13 +72,10 @@ library(ggplot2)
 library(scales)
 library(forcats)
 
-library(igraph)
-library(ggraph)
-
 ```
 
 
-## 1.2. Custom functions
+## Custom functions
 
 Open-source package are very powerful as they provide general purpose functions, but it's also useful to have some custom functions to perform repetitive task and improve code readability. During this project we will use the following functions:
 
@@ -134,12 +133,7 @@ style_table <- function(df){
   
   df |>
   flextable() |>
-  border_remove() |>
-  bg(bg = "#008000", part = "header") |>
-  bold(part = "header") |>
-  color(color = "white", part = "header") |>
-  border_inner_h(border = officer::fp_border(color = "#dddddd")) |>
-  bg(i = 1:nrow(df) %% 2 != 0, bg = "#f3f3f3") |>
+  theme_vanilla() |>
   autofit()
   
 }
@@ -161,11 +155,11 @@ theme_set(custom_theme)
 
 ```
 
-## 1.3. Data importation
+## Data importation
 
 In this section we will take the data available and load it into R as `data.table` objects.
 
-### 1.3.1. Main data
+### Main data
 
 **ProtestRaw** will be the main reference to use during the analysis. Any other imported data during this project will be used to extend or clean the information given in this data.
 
@@ -178,13 +172,15 @@ pillar::glimpse(ProtestRaw)
 
 ```
 
-### 1.3.2. Complementary data
+### Complementary data
 
 Let's import complementary data to make sense, clean and expand the information provided in `ProtestRaw`.
 
 - **CountryCapital:** It has the capitals of 240 countries.
 
-```{r scrap-country-capital, eval=FALSE, include=TRUE}
+```{r scrap-country-capital}
+#| eval: false
+#| include: true
 
 WorldCitiesIndexPage <- 
   read_html("https://www.worlddata.info/capital-cities.php")
@@ -207,7 +203,9 @@ pillar::glimpse(CountryCapital)
 
 - **CountryCities:** It lists more cities related to the data frame `CountryCapital`.
 
-```{r scrap-country-cities, eval=FALSE, include=TRUE}
+```{r scrap-country-cities}
+#| eval: false
+#| include: true
 
 CountryCities <-
   CountryCapital$link
@@ -241,7 +239,9 @@ pillar::glimpse(CountryCode)
 
 - **Polity4:** It has many political indicators for every country code and year.
 
-```{r eval=FALSE, include=TRUE}
+```{r polity4-indicators}
+#| eval: false
+#| include: true
 
 temp <- tempfile(fileext = ".xls")
 
@@ -256,7 +256,9 @@ pillar::glimpse(Polity4)
 
 ```
 
-```{r eval=run_fast, include=FALSE}
+```{r importing-from-csv}
+#| eval: true
+#| include: false
 
 # fwrite(CountryCapital,"Raw-data/Country-Capital.csv")
 # fwrite(CountryCities,"Raw-data/Country-Cities.csv")
@@ -273,11 +275,11 @@ Polity4 <-
 
 ```
 
-# 2. Data understanding
+# Data understanding
 
 Before starting the cleaning process itself we need to understand some general characteristics of data. This step it's crucial in order to know *how to interpret the data* and *what cleaning step are needed*.
 
-## 2.1. Checking columns' meaning
+## Checking columns' meaning
 
 Once we have all the data in R we can start to check the information that contains each column of `ProtestRaw`, as there is no documentation related to the main data we need to check if the columns really have what we think after reading each title:
 
@@ -543,7 +545,7 @@ ProtestRaw[notes %like% "\\w",
            .(id, `Number of words` = str_squish(notes) |> str_count(" ")+1)
           ][, word_avg := mean(`Number of words`)] |>
   ggplot(aes(`Number of words`))+
-  geom_histogram()+
+  geom_histogram(bins = 30, fill = "dodgerblue3")+
   geom_vline(aes(xintercept = word_avg))+
   scale_x_log10()+
   labs(title = "Distribution of number of words per note")
@@ -558,7 +560,7 @@ ProtestRaw[sources %like% "\\w",
            .(id, `Number of words` = str_squish(sources) |> str_count(" ")+1)
           ][, word_avg := mean(`Number of words`)] |>
   ggplot(aes(`Number of words`))+
-  geom_histogram()+
+  geom_histogram(bins = 30, fill = "dodgerblue3")+
   geom_vline(aes(xintercept = word_avg))+
   scale_x_log10()+
   labs(title = "Distribution of number of words per source")
@@ -566,7 +568,7 @@ ProtestRaw[sources %like% "\\w",
 ```
 
 
-## 2.2. Understanding the missing values distribution
+## Understanding the missing values distribution
 
 It is important to know that the data has ***`r nrow(ProtestRaw) |> comma()` rows***, but not all rows represent a protest, ***`r  ProtestRaw[protest == 0] |> nrow() |> comma()` rows*** of the data represent years where the wasn't any protest in a particular country. Let's see how is the missing value distribution in each case.
 
@@ -580,7 +582,7 @@ ProtestRaw[, lapply(.SD, function(x) x |> is.na() |> mean()),
   ][, Variables := fct_reorder(Variables, `# Missing`, sum)] |>
   ggplot(aes(`# Missing`, `Variables`))+
   geom_blank(aes(x = `# Missing` *1.1))+
-  geom_col(fill = "seagreen")+
+  geom_col(fill = "dodgerblue3")+
   geom_text(aes(label = percent(`# Missing`, accuracy = 0.01)),
             hjust = -0.3)+
   scale_x_continuous(labels = percent_format(accuracy = 1))+
@@ -592,11 +594,11 @@ ProtestRaw[, lapply(.SD, function(x) x |> is.na() |> mean()),
 
 As we can check the rows that doesn't represent a protest are very empty. We will remove them as they won't be useful to answer the question.
 
-# 3. Data cleaning process
+# Data cleaning process
 
 After checking the data feature by feature we got a better sense of the data and a better vision of the problem that need to be solved before getting insight from the data. 
 
-## 3.1. Simple cleaning
+## Simple cleaning
 
 In this section we will apply simplest cleaning steps all together.
 
@@ -629,7 +631,7 @@ ProtestSimpleClean <-
 ```
 
 
-## 3.2. Completing participants_category with participants column
+## Completing participants_category with participants column
 
 AQUI FALTA TEXTO
 
@@ -640,7 +642,7 @@ ProtestCategoryClean <-
   # Let's work only with protests that are missing participants_category
   ProtestSimpleClean[is.na(participants_category)
                      
-                     # Applying general cleaning to participants
+  # Applying general cleaning to participants
   ][,participants := participants |>  
                       str_to_lower() |> 
                       str_remove_all(",") |>
@@ -713,7 +715,7 @@ ProtestCategoryClean <-
 ```
 
 
-## 3.3. Reshaping protesterdemand and stateresponse
+## Reshaping protesterdemand and stateresponse
 
 ```{r}
 
@@ -721,22 +723,25 @@ ProtestReshaped <-
   
   # Melting protesterdemand and stateresponse just keeping protest id
   ProtestCategoryClean[, melt(.SD, id.vars = "id",
-                              measure.vars = str_subset(names(.SD),
-                                                        "^protesterdemand|^stateresponse"),
+                              measure.vars =
+                                str_subset(names(.SD),
+                                           "^(protesterdemand|stateresponse)"),
                               value.name = "actions",
                               variable.factor = FALSE)
   ][actions %like% "\\w"
   ][,`:=`(variable = fifelse(variable %like% "^protesterdemand", 
                              "demand","response"),
-          actions = fifelse(actions == "accomodation","accommodation",actions),
+          actions = fifelse(actions == "accomodation",
+                            "accommodation",actions),
           action_occur = 1L)
   ][, unique(.SD) 
-  ][, dcast(.SD, id ~ variable + actions, value.var = "action_occur", fill = 0L)
+  ][, dcast(.SD, id ~ variable + actions, 
+            value.var = "action_occur", fill = 0L)
     
     
   # Adding the other variables to have back the data complete
   ][, merge(.SD, ProtestCategoryClean, by = "id", all = TRUE)
-  ][, .SD, .SDcols = !patterns("^protesterdemand|^stateresponse")
+  ][, .SD, .SDcols = !patterns("^(protesterdemand|stateresponse)")
   ][,{ 
     ColsToFill <- str_subset(names(.SD),"^(demand|response)")
     copy(.SD)[is.na(response_shootings), (ColsToFill) := 0L] 
@@ -745,9 +750,9 @@ ProtestReshaped <-
 ```
 
 
-## 3.4. Cleaning location data
+## Cleaning location data
 
-### 3.4.1. Getting cities names
+### Getting cities names
 
 Getting the global information
 
@@ -777,7 +782,7 @@ CountryCities[, (ColumnsToTakeOut) := NULL]
 
 
 
-## 3.5. Checking results
+## Checking results
 
 After applying the changes we can see that currently all the columns have less
 than 5% of missing values.
@@ -792,7 +797,7 @@ than 5% of missing values.
   ][, `:=`(Variables = fct_reorder(Variables, `# Missing`, sum))] |>
   ggplot(aes(`# Missing`, `Variables`))+
   geom_blank(aes(x = `# Missing` *1.15))+
-  geom_col(fill = "forestgreen")+
+  geom_col(fill = "dodgerblue3")+
   geom_text(aes(label = percent(`# Missing`, accuracy = 0.01)), hjust = -0.3)+
   scale_x_continuous(labels = percent_format(accuracy = 0.01))+
   expand_limits(x = 1)+
