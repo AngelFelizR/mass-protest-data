@@ -140,6 +140,15 @@ style_table <- function(df){
 
 ```
 
+
+- **clean_amount:** Transforms a character vector with number and commas into a double one.
+
+```{r}
+
+clean_amount <- \(x) str_remove_all(x,",") |> as.double()
+
+```
+
 - **custom_theme:** Defines the style of all ggplots across the project.
 
 ```{r}
@@ -179,40 +188,89 @@ Let's import complementary data to make sense, clean and expand the information 
 - **CountryCapital:** It has the capitals of 240 countries.
 
 ```{r scrap-country-capital}
-#| eval: false
-#| include: true
 
-WorldCitiesIndexPage <- 
-  read_html("https://www.worlddata.info/capital-cities.php")
-
-CountryCapital <-
-  WorldCitiesIndexPage |>
-  html_table() |>
-  rbindlist(use.names = TRUE) |>
-  (\(DT) DT[, link :=  
-              WorldCitiesIndexPage |> 
-              html_element(xpath = str_c('//tr/td/a[text() = "',Country,'"]')) |> 
-              html_attr("href") |>
-             (\(x) str_c("https://www.worlddata.info",x) )(),
-            by = Country
-         ][, Population := Population |> str_remove_all(",") |> as.double()])()
-
-pillar::glimpse(CountryCapital)
+# WorldCitiesIndexPage <-
+#   read_html("https://www.worlddata.info/capital-cities.php")
+# 
+# CountryCapital <-
+#   WorldCitiesIndexPage |>
+#   html_table() |>
+#   rbindlist(use.names = TRUE) |>
+#   (\(DT) DT[, link :=
+#               WorldCitiesIndexPage |>
+#               html_element(xpath = str_c('//tr/td/a[text() = "',Country,'"]')) |>
+#               html_attr("href") |>
+#              (\(x) str_c("https://www.worlddata.info",x) )(),
+#             by = Country
+#          ][, .(Country,
+#                `Capital City`,
+#                `Capital Population` = clean_amount(Population),
+#                `link`)])()
+# 
+# pillar::glimpse(CountryCapital)
 
 ```
 
 - **CountryCities:** It lists more cities related to the data frame `CountryCapital`.
 
 ```{r scrap-country-cities}
-#| eval: false
-#| include: true
 
 CountryCities <-
-  CountryCapital$link
-  lapply(scrap_country_cities) |>
-  rbindlist(use.names = TRUE, fill = TRUE)
+  fread("Raw-data/worldcities.csv", na.strings = "", sep=",",
+        select = c("country","city_ascii","capital")
+  )[capital != "primary",
+    capital := NA_character_
+  ][!is.na(capital)
+  ][, `Capital City` := unique(city_ascii),
+    by = "country"][]
 
-pillar::glimpse(CountryCities)
+# CountryCities <-
+#   CountryCapital$link
+#   lapply(scrap_country_cities) |>
+#   rbindlist(use.names = TRUE, fill = TRUE)
+# 
+# pillar::glimpse(CountryCities)
+
+```
+
+As we could see some countries have some countries refer to the region column with a different name. That produces a lot missing value in the region column after binding the results despite the data frame has many of those values with a different name as we can see bellow.
+
+```{r missing-region check}
+
+# CountryCities[is.na(Region) & !is.na(City)] |>
+#   naniar::vis_miss()
+
+```
+
+To solve this problem we just need to save in a vector the columns related to regions with a different name and check if a value they have it's missing in the region column and if that is the case we copy that value to the region column.
+
+```{r filling-region-column}
+
+# OtherRegionColumn <- 
+#   setdiff(names(CountryCities),
+#           c("City","Region","Population","link"))
+# 
+# for (var_name in OtherRegionColumn) {
+#   
+#   CountryCities[is.na(Region) & !is.na(City) & !is.na(get(var_name)), 
+#                 Region := get(var_name)]
+#   
+# }
+# 
+# CountryCities[is.na(Region) & !is.na(City)] |>
+#   naniar::vis_miss()
+```
+
+After applying those changes we can see that all missing Region columns doesn't have any other from it could the data from, we can delete does columns and join the results with the `CountryCapital` data.
+
+```{r joining-capital-cities}
+
+CountryCapitalCities <-
+  CountryCities[, (OtherRegionColumn) := NULL
+  ][, `:=`(City = str_remove(City," / Capital$"),
+           Population = clean_amount(Population))
+  ][CountryCapital, on = "link"]
+
 
 ```
 
@@ -243,32 +301,32 @@ pillar::glimpse(CountryCode)
 #| eval: false
 #| include: true
 
-temp <- tempfile(fileext = ".xls")
-
-download.file("http://www.systemicpeace.org/inscr/p4v2018.xls", 
-              destfile = temp, mode = 'wb')
-
-Polity4 <- 
-  readxl::read_xls(temp) |>
-  as.data.table()
-
-pillar::glimpse(Polity4)
+# temp <- tempfile(fileext = ".xls")
+# 
+# download.file("http://www.systemicpeace.org/inscr/p4v2018.xls",
+#               destfile = temp, mode = 'wb')
+# 
+# Polity4 <-
+#   readxl::read_xls(temp) |>
+#   as.data.table()
+# 
+# pillar::glimpse(Polity4)
 
 ```
 
 ```{r importing-from-csv}
-#| eval: true
+#| eval: false
 #| include: false
 
-# fwrite(CountryCapital,"Raw-data/Country-Capital.csv")
-# fwrite(CountryCities,"Raw-data/Country-Cities.csv")
+# fwrite(CountryCapitalCities,"Raw-data/Country-Capital-Cities.csv")
 # fwrite(Polity4,"Raw-data/Polity4.csv")
 
-CountryCapital <-
-  fread("Raw-data/Country-Capital.csv", na.strings = "")
+ 
+# CountryCities <-
+#   fread("Raw-data/Country-Cities.csv", na.strings = "")
 
-CountryCities <-
-  fread("Raw-data/Country-Cities.csv", na.strings = "")
+CountryCapitalCities <-
+  fread("Raw-data/Country-Capital-Cities.csv", na.strings = "")
 
 Polity4 <-
   fread("Raw-data/Polity4.csv", na.strings = "")
@@ -596,11 +654,11 @@ As we can check the rows that doesn't represent a protest are very empty. We wil
 
 # Data cleaning process
 
-After checking the data feature by feature we got a better sense of the data and a better vision of the problem that need to be solved before getting insight from the data. 
+After checking the data feature by feature we got a better sense of the data and a better vision of the problems that need to be solved before getting insight from the data. 
 
-## Simple cleaning
+## Initial cleaning
 
-In this section we will apply simplest cleaning steps all together.
+In this section we will apply simplest cleaning steps at once.
 
 ```{r}
 
@@ -633,9 +691,9 @@ ProtestSimpleClean <-
 
 ## Completing participants_category with participants column
 
-AQUI FALTA TEXTO
+As the `participants` column contains aproximations related to number of people who took place during each protests makes more same to complete the missing `participants_category` based on those approximations by using the next code.
 
-```{r data-wrangling}
+```{r completing-participants-category}
 
 ProtestCategoryClean <-
   
@@ -714,10 +772,13 @@ ProtestCategoryClean <-
 
 ```
 
+There 11 protests where the wasn't any information about the number of participants and label them as Missing.
 
 ## Reshaping protesterdemand and stateresponse
 
-```{r}
+Now we reorganize the `protesterdemand` and `stateresponse` to have a single column for each category having 1 if the each category is related to the protest and 0 otherwise.
+
+```{r reshaping-data}
 
 ProtestReshaped <-
   
@@ -740,8 +801,11 @@ ProtestReshaped <-
     
     
   # Adding the other variables to have back the data complete
-  ][, merge(.SD, ProtestCategoryClean, by = "id", all = TRUE)
-  ][, .SD, .SDcols = !patterns("^(protesterdemand|stateresponse)")
+  ][, merge(.SD, 
+            ProtestCategoryClean, 
+            by = "id", all = TRUE)
+  ][, .SD, 
+    .SDcols = !patterns("^(protesterdemand|stateresponse)")
   ][,{ 
     ColsToFill <- str_subset(names(.SD),"^(demand|response)")
     copy(.SD)[is.na(response_shootings), (ColsToFill) := 0L] 
@@ -749,47 +813,12 @@ ProtestReshaped <-
 
 ```
 
-
-## Cleaning location data
-
-### Getting cities names
-
-Getting the global information
-
-Getting specitit information of each country
-Let's take that list and create a nice table
-
-```{r}
-
-ColumnsToTakeOut <- 
-  setdiff(names(CountryCities),
-          c("City","Region","Population","link"))
-
-for (var_name in ColumnsToTakeOut) {
-  
-  CountryCities[is.na(Region) & !is.na(City) & !is.na(get(var_name)), 
-                Region := get(var_name)]
-  
-}
-
-CountryCities[is.na(Region) & !is.na(City)] |>
-  naniar::vis_miss()
-
-CountryCities[, (ColumnsToTakeOut) := NULL]
-
-```
-
-
-
-
-## Checking results
-
-After applying the changes we can see that currently all the columns have less
+After applying those changes we can see that currently all the columns have less
 than 5% of missing values.
 
 ```{r}
 
-  ProtestReshaped[, lapply(.SD, function(x) mean(is.na(x)))
+ProtestReshaped[, lapply(.SD, function(x) mean(is.na(x)))
   ][, id := 1
   ][, melt(.SD, id.vars = "id", 
            variable.name = "Variables",
@@ -806,7 +835,43 @@ than 5% of missing values.
 
 ```
 
+## Cleaning location data
+
+```{r}
+
+
+CountryCapitalCities[, .(city_regex = City |> 
+                                      stringi::stri_trans_general("Latin-ASCII") |>
+                                      (\(x) fcase(x == "Santiago de los Caballeros",
+                                                  "Santiago",
+                                                  x == "San Juan de la Maguana",
+                                                  "San Juan",
+                                                  rep(TRUE,length(x)),
+                                                  x))() |>
+                                      str_c(collapse = "|")),
+                     by = c("Country","Capital City")
+][ProtestReshaped, on = c("Country"="country")
+][, `:=`(in_capital = location %like% `Capital City`,
+         cities_found = str_match_all(location,city_regex) |> unlist() |> length(),
+         location_no_found = str_remove_all(location,city_regex)),
+  by = id
+][,location_no_found :=  str_remove_all(location_no_found,
+                                        str_c(c("[:punct:]",
+                                                " and($| )",
+                                                str_c(" ",tm::stopwords("en"),"($| )")), 
+                                              collapse = "|")) |> 
+                         str_squish(),
+][! location_no_found %like% "\\w",
+  location_no_found := NA_character_
+][!is.na(location_no_found) & Country == "China", unique(location)]
+  .(id,Country,location,location_no_found,cities_found,in_capital)]
+
+
+```
+
 
 Arel-Bundock, Vincent, Nils Enevoldsen, and CJ Yetman, (2018). countrycode: An R package to convert country names and country codes. Journal of Open Source Software, 3(28), 848, https://doi.org/10.21105/joss.00848
 
 https://www.systemicpeace.org/inscrdata.html
+
+https://simplemaps.com/data/world-cities
