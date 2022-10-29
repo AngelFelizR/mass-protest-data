@@ -62,12 +62,15 @@ This first step of the process is to install and load all the libraries to avoid
 library(data.table)
 library(lubridate)
 library(stringr)
+library(stringdist)
 
 library(flextable)
 
 library(ggplot2)
 library(scales)
 library(forcats)
+
+library(tidytext)
 
 ```
 
@@ -76,50 +79,15 @@ library(forcats)
 
 Open-source package are very powerful as they provide general purpose functions, but it's also useful to have some custom functions to perform repetitive task and improve code readability. During this project we will use the following functions:
 
-- **scrap_country_cities:** This function goes to a link direction and check if there is table with the word `City` as one the headers. If the table is found the function returns a `data.table` with the html table and the original link, otherwise returns a empty `data.table` with source link.
+- **lower_clean_name:**
 
-```{r define-scrap-function}
-
-scrap_country_cities <- function(link,
-                                 secs_to_wait = 2){
+```{r}
+lower_clean_name <- function(text){
   
-  #1. Check if the table with countries' cities is in the web page
-  #   this step is important to avoid errors during the function application
-  PageWithCityTable <-
-    read_html(link)|>
-    html_element(xpath = '//table//th[text() = "City"]')
-  
-  HasCityTable <-
-    length(PageWithCityTable) > 0
-  
-  #2. Extract the table to report
-  CityTable <-
-  if(HaveCityTable){
-    
-    PageWithCityTable |>
-      html_element(xpath = "..") |>
-      html_element(xpath = "..") |>
-      html_table() |>
-      as.data.table() |>
-      (\(DT) DT[,link := link])()
-    
-  }else{
-    
-    data.table(City = NA_character_,
-               Region = NA_character_,
-               Population = NA_character_,
-               link = link)
-  
-  }
-  
-  #3. Waiting some seconds to avoid taking the page down
-  Sys.sleep(secs_to_wait)
-  
-  #4. Export the results
-  return(CityTable)
-  
+  str_to_lower(text) |>
+    str_replace_all("[^A-Za-z ']|city"," ") |> 
+    str_squish()
 }
-
 ```
 
 - **style_table:** Takes a `data.frame` and render it as html table with a custom style.
@@ -136,7 +104,6 @@ style_table <- function(df){
 }
 
 ```
-
 
 - **clean_amount:** Transforms a character vector with number and commas into a double one.
 
@@ -182,7 +149,7 @@ pillar::glimpse(ProtestRaw)
 
 Let's import complementary data to make sense, clean and expand the information provided in `ProtestRaw`.
 
-- **WorldCities:** ~~AQUI FALTA TEXTO~~
+- **WorldCities:** It has information about 239 countries and their cities.
 
 ```{r scrap-country-cities}
 
@@ -190,16 +157,27 @@ WorldCities <-
   fread("Raw-data/worldcities.csv", na.strings = "", sep=",",
         select = c("country","city_ascii","capital","population")
   )[order(country,-population)
+    
   ][!capital %like% "\\w", 
     capital := NA_character_
   ][country == "Taiwan" & city_ascii == "Taipei", 
     capital := "primary"
+  ][,`:=`(country = fcase(country == "Hong Kong","China",
+                          country == "The Gambia","Gambia",
+                          country == "United Arab Emirates","United Arab Emirate",
+                          country == "Cabo Verde", "Cape Verde",
+                          country == "Bosnia And Herzegovina","Bosnia",
+                          country == "Slovakia", "Slovak Republic",
+                          country == "Czechia","Czech Republic",
+                          rep(TRUE,.N), country) |>
+                   lower_clean_name(),
+          city_ascii = lower_clean_name(city_ascii))
+    
   ][, merge(.SD,
             .SD[capital == "primary",
                 .(country, capital_city = city_ascii)
             ][, unique(.SD, by = "country")],
             by = "country", all.x = TRUE)]
-
 
 pillar::glimpse(WorldCities)
 
@@ -229,8 +207,6 @@ pillar::glimpse(CountryCode)
 - **Polity4:** It has many political indicators for every country code and year.
 
 ```{r polity4-indicators}
-#| eval: false
-#| include: true
 
 # temp <- tempfile(fileext = ".xls")
 # 
@@ -240,29 +216,14 @@ pillar::glimpse(CountryCode)
 # Polity4 <-
 #   readxl::read_xls(temp) |>
 #   as.data.table()
-# 
-# pillar::glimpse(Polity4)
-
-```
-
-```{r importing-from-csv}
-#| eval: false
-#| include: false
-
-# fwrite(CountryCapitalCities,"Raw-data/Country-Capital-Cities.csv")
-# fwrite(Polity4,"Raw-data/Polity4.csv")
-
- 
-# CountryCities <-
-#   fread("Raw-data/Country-Cities.csv", na.strings = "")
-
-CountryCapitalCities <-
-  fread("Raw-data/Country-Capital-Cities.csv", na.strings = "")
 
 Polity4 <-
   fread("Raw-data/Polity4.csv", na.strings = "")
 
+pillar::glimpse(Polity4)
+
 ```
+
 
 # Data understanding
 
@@ -617,8 +578,9 @@ ProtestSimpleClean <-
   ][, protestnumber := 1:.N,
     by = c("country","year")
     
-  # Set Location Case
-  ][, location := str_to_lower(location)]
+  # Setting Country and Location Case
+  ][,`:=`(location = lower_clean_name(location),
+          country = lower_clean_name(country)) ]
 
 ```
 
@@ -769,34 +731,85 @@ ProtestReshaped[, lapply(.SD, function(x) mean(is.na(x)))
 
 ```
 
-## Cleaning location data
+# Expanding current information
+
+## Extracting location data
+
+As we know in the column `location` there is information about the place where each protests took place. The information is store in plain text so we will need to use regular expression to extract some information about it. with this code we will be able to know the number of sites where the protest took place, if the protest took place in the capital and if the protest was a national movement or just happened in specific cities.
+
+```{r location-extraction}
+
+NationalRegex <-
+  "nationwide|(^| )national( level| including| in scope|.+cities|$|[:;,\\.])|across "
+
+ProtestCitiesCount <-
+  
+  WorldCities[, .(city_regex = str_c(city_ascii,collapse = "|")),
+              by = .(country, capital_city)
+  ][ProtestReshaped, on = "country"
+    
+  ][, `:=`(in_capital = location %like% capital_city,
+           is_national = location %like% str_c(NationalRegex, country),
+           num_cities = str_match_all(location, city_regex) |> unlist() |> uniqueN(),
+           location_no_found = str_remove_all(location, city_regex) |>
+                               str_remove_all(str_c(NationalRegex, country)) |>
+                               str_squish()),
+    by = "id"
+  ][!location_no_found %like% "\\w" |
+      location_no_found %chin% c(stop_words$word, tm::stopwords("spanish")),
+    location_no_found := NA_character_]
+
+```
+
+## Extracting protesteridentity data
+
+```{r}
+
+AproximationCities <-
+  merge(ProtestCitiesCount[!is.na(location_no_found),
+                           .(id, country, location, location_no_found)],
+        WorldCities[,.(country, city_ascii)],
+        by = "country", allow.cartesian = TRUE
+  )[, weight := 
+      1 - 
+      stringdist(location_no_found,city_ascii, method = "lcs") /
+      (nchar(location_no_found)+nchar(city_ascii))
+  ][weight >= 0.8
+  ][order(-weight),
+    unique(.SD, by = "id")]
+
+```
+
+
+# Data exploration
 
 ```{r}
 
 
-WorldCities[, .(city_regex = city_ascii |> str_to_lower() |> str_c(collapse = "|")),
-            by = .(country,
-                   capital_city = str_to_lower(capital_city))
-][ProtestReshaped, on = "country"
-][, `:=`(in_capital = location %like% capital_city,
-         cities_found = str_match_all(location,city_regex) |> unlist() |> length(),
-         location_no_found = str_remove_all(location,city_regex)),
-  by = "id"
-][,location_no_found :=  str_remove_all(location_no_found,
-                                        str_c(c("[:punct:]",
-                                                " and($| )",
-                                                str_c(" ",tm::stopwords("en"),"($| )")), 
-                                              collapse = "|")) |> 
-                         str_squish(),
-][! location_no_found %like% "\\w",
-  location_no_found := NA_character_
-][ cities_found ==0,
-  .(id,country,location,location_no_found,cities_found,in_capital)]
 
-WorldCities[country == "Dominican Republic"]
-
+ProtestCitiesCount[, .(id,
+                       country, 
+                       response_accommodation = fifelse(response_accommodation == 1,
+                                                        "accommodation",
+                                                        "no accommodation"),
+                       location_no_found)
+][, unnest_tokens(.SD, word, location_no_found)
+][!is.na(word)
+][!as.data.table(stop_words), on = "word"
+][word %chin% EnglishPossibleWords &
+    ! word %like% "\\d", 
+  .(word_count = uniqueN(id)),
+  by = c("response_accommodation","word")
+][, dcast(.SD, word ~ response_accommodation,
+          value.var = "word_count", fill = 0)
+][, c("% accommodation","% no accommodation") :=
+    lapply(.SD, \(x) (x+1)/sum(x+1)),
+  .SDcols = c("accommodation","no accommodation")
+][, log_ratio := log2(`% accommodation`/`% no accommodation`)
+][order(-log_ratio)]
 
 ```
+
 
 
 Arel-Bundock, Vincent, Nils Enevoldsen, and CJ Yetman, (2018). countrycode: An R package to convert country names and country codes. Journal of Open Source Software, 3(28), 848, https://doi.org/10.21105/joss.00848
@@ -804,3 +817,8 @@ Arel-Bundock, Vincent, Nils Enevoldsen, and CJ Yetman, (2018). countrycode: An R
 https://www.systemicpeace.org/inscrdata.html
 
 https://simplemaps.com/data/world-cities
+
+https://www.bragitoff.com/2016/03/english-dictionary-in-csv-format/
+
+https://www.mso.anu.edu.au/~ralph/OPTED/
+
