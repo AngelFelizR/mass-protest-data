@@ -62,7 +62,6 @@ This first step of the process is to install and load all the libraries to avoid
 library(data.table)
 library(lubridate)
 library(stringr)
-library(stringdist)
 
 library(flextable)
 
@@ -89,6 +88,31 @@ lower_clean_name <- function(text){
     str_squish()
 }
 ```
+
+- **find_string_approximation:**
+
+```{r}
+
+find_string_approximation <- function(data1,
+                                      data2,
+                                      id.var,
+                                      merge.by,
+                                      match.vars,
+                                      min.tolerance = 0.7,
+                                      stringdist.method = "lcs"){
+  
+  merge(data1, data2, by = merge.by, allow.cartesian = TRUE
+  )[, weight := 1 - stringdist::stringdist(get(match.vars[1]),get(match.vars[2]), 
+                                           method = stringdist.method) /
+                    (nchar(get(match.vars[1]))+nchar(get(match.vars[2])))
+  ][weight >= min.tolerance
+  ][order(-weight),
+    unique(.SD, by = id.var)]
+  
+}
+
+```
+
 
 - **style_table:** Takes a `data.frame` and render it as html table with a custom style.
 
@@ -229,7 +253,7 @@ pillar::glimpse(Polity4)
 
 Before starting the cleaning process itself we need to understand some general characteristics of data. This step it's crucial in order to know *how to interpret the data* and *what cleaning step are needed*.
 
-## Checking columns' meaning
+## Validation process
 
 Once we have all the data in R we can start to check the information that contains each column of `ProtestRaw`, as there is no documentation related to the main data we need to check if the columns really have what we think after reading each title:
 
@@ -518,7 +542,7 @@ ProtestRaw[sources %like% "\\w",
 ```
 
 
-## Understanding the missing values distribution
+## Missing data distribution
 
 It is important to know that the data has ***`r nrow(ProtestRaw) |> comma()` rows***, but not all rows represent a protest, ***`r  ProtestRaw[protest == 0] |> nrow() |> comma()` rows*** of the data represent years where the wasn't any protest in a particular country. Let's see how is the missing value distribution in each case.
 
@@ -579,7 +603,9 @@ ProtestSimpleClean <-
     by = c("country","year")
     
   # Setting Country and Location Case
-  ][,`:=`(location = lower_clean_name(location),
+  ][,`:=`(location = lower_clean_name(location) |> 
+                     str_replace_all("kiev","kyiv") |>
+                     str_replace_all("chittagong","chattogram"),
           country = lower_clean_name(country)) ]
 
 ```
@@ -643,8 +669,7 @@ ProtestCategoryClean <-
                     between(participants_clean, 1000, 1999), "1000-1999",
                     between(participants_clean, 2000, 4999), "2000-4999",
                     between(participants_clean, 5000, 10000), "5000-10000",
-                    participants_clean > 10000, ">10000",
-                    default = "Missing"),
+                    participants_clean > 10000, ">10000"),
            participants_clean = NULL)
     
   # Adding protests that aren't missing participants_category  
@@ -735,49 +760,125 @@ ProtestReshaped[, lapply(.SD, function(x) mean(is.na(x)))
 
 ## Extracting location data
 
-As we know in the column `location` there is information about the place where each protests took place. The information is store in plain text so we will need to use regular expression to extract some information about it. with this code we will be able to know the number of sites where the protest took place, if the protest took place in the capital and if the protest was a national movement or just happened in specific cities.
+As we know in the column `location` there is information about the place where each protests took place. I would be really interesting to extract from that field the following information:
+
+1. Does it mention if it was a national protest?
+2. How many cities mention each protest?
+3. Did the protest took place in the capital?
+
+To achieve that we need to make the process in 3 steps.
+
+- In the first step we need check in the `location` field mention if the protest took place nationality and identify the cities that have a perfect math with the `WorldCities` data frame.
 
 ```{r location-extraction}
 
 NationalRegex <-
   "nationwide|(^| )national( level| including| in scope|.+cities|$|[:;,\\.])|across "
 
-ProtestCitiesCount <-
-  
+CustomStopWords <-
+  c(stop_words$word, tm::stopwords("spanish"), "region",
+    "province", "district", "valley", "including","cities",
+    "shire", "downtown", "national", "parliament")
+
+ProtestExactCityMatch <-
   WorldCities[, .(city_regex = str_c(city_ascii,collapse = "|")),
               by = .(country, capital_city)
   ][ProtestReshaped, on = "country"
-    
-  ][, `:=`(in_capital = location %like% capital_city,
-           is_national = location %like% str_c(NationalRegex, country),
-           num_cities = str_match_all(location, city_regex) |> unlist() |> uniqueN(),
+  ][, `:=`(exact_cities_found = .(str_match_all(location, city_regex) |> 
+                                    unlist() |> 
+                                    unique()),
            location_no_found = str_remove_all(location, city_regex) |>
                                str_remove_all(str_c(NationalRegex, country)) |>
-                               str_squish()),
+                               str_squish(),
+           is_national = location %like% str_c(NationalRegex, country)),
     by = "id"
+  ][,`:=`(num_cities = sapply(exact_cities_found, length),
+          city_regex = NULL)
   ][!location_no_found %like% "\\w" |
-      location_no_found %chin% c(stop_words$word, tm::stopwords("spanish")),
+      location_no_found %chin% CustomStopWords,
     location_no_found := NA_character_]
 
 ```
 
-## Extracting protesteridentity data
+- To apply the second step we need fiend the city that minimize the longest common sub-string distance (lcs) for each location_no_found and country.
 
 ```{r}
 
-AproximationCities <-
-  merge(ProtestCitiesCount[!is.na(location_no_found),
-                           .(id, country, location, location_no_found)],
-        WorldCities[,.(country, city_ascii)],
-        by = "country", allow.cartesian = TRUE
-  )[, weight := 
-      1 - 
-      stringdist(location_no_found,city_ascii, method = "lcs") /
-      (nchar(location_no_found)+nchar(city_ascii))
-  ][weight >= 0.8
-  ][order(-weight),
-    unique(.SD, by = "id")]
+StringApproxCols <- 
+  c("id", "country", "location", "location_no_found", "num_cities")
 
+OneWorldCityApprox <-
+  ProtestExactCityMatch[!is.na(location_no_found), ..StringApproxCols] |>
+  find_string_approximation(data2 = WorldCities[,.(country, city_ascii)],
+                            id.var = "id",
+                            merge.by = "country",
+                            match.vars = c("location_no_found","city_ascii"))
+```
+
+After that step we could found `r nrow(OneWorldCityApprox)` protest cities but that with that we can find cities if the field describes more than one city. To check that let's see the number of words distribution.
+
+```{r}
+ProtestExactCityMatch[!is.na(location_no_found),
+                      .(word_count =  str_count(location_no_found," ")+1,
+                        success = fifelse(id %in% OneWorldCityApprox$id,
+                                          "City found","City no found") |>
+                          factor(levels = c("City no found","City found")))] |>
+  ggplot(aes(x = word_count,y = success, color = success))+
+  geom_jitter(alpha = 0.20, size = 2, height = 0.40, width = 0.15)+
+  scale_x_continuous(breaks = breaks_width(1,1))+
+  scale_color_manual(values = c("brown2","dodgerblue3"))+
+  labs(title = "Number of words distribution",
+       x = "Number of words", y = "")+
+  theme(panel.grid.major.y = element_blank(),
+        legend.position = "none")
+```
+
+As we can see most of the cities found only have one of two words and only some few one have 3 or 4 words. It is all also important to check that rows with one word didn't find any city related so we can take those cases out as we won't any extra city related those cases.
+
+```{r}
+
+CityApproximations <-
+  lapply(1:4, function(n_gram){
+  ProtestExactCityMatch[!is.na(location_no_found) &
+                          str_count(location_no_found," ") >= 1 &
+                          !id %in% OneWorldCityApprox$id,
+                        unnest_tokens(.SD, city_word,location_no_found,
+                                      token = "ngrams", n = n_gram),
+                        .SDcols = StringApproxCols
+  ][! city_word %chin% CustomStopWords,
+    find_string_approximation(.SD,
+                              data2 = WorldCities[,.(country, city_ascii)],
+                              id.var = "id",
+                              merge.by = "country",
+                              match.vars = c("city_word","city_ascii"))
+  ][, n_gram := n_gram]}) |>
+  rbindlist() |>
+  rbind(OneWorldCityApprox, fill = TRUE) |>
+  unique(by = c("id","city_ascii"))
+
+
+```
+
+
+```{r}
+ProtestExactCityMatch[!is.na(location_no_found),
+                      .(word_count =  str_count(location_no_found," ")+1,
+                        success = fifelse(id %in% CityApproximations$id,
+                                          "City found","City no found") |>
+                          factor(levels = c("City no found","City found")))] |>
+  ggplot(aes(x = word_count,y = success, color = success))+
+  geom_jitter(alpha = 0.20, size = 2, height = 0.40, width = 0.15)+
+  scale_x_continuous(breaks = breaks_width(1,1))+
+  scale_color_manual(values = c("brown2","dodgerblue3"))+
+  labs(title = "Number of words distribution",
+       x = "Number of words", y = "")+
+  theme(panel.grid.major.y = element_blank(),
+        legend.position = "none")
+
+
+ProtestExactCityMatch[!is.na(location_no_found) &
+                        !id %in% CityApproximations$id,
+                      ..StringApproxCols]
 ```
 
 
@@ -785,28 +886,27 @@ AproximationCities <-
 
 ```{r}
 
-
-
-ProtestCitiesCount[, .(id,
-                       country, 
-                       response_accommodation = fifelse(response_accommodation == 1,
-                                                        "accommodation",
-                                                        "no accommodation"),
-                       location_no_found)
-][, unnest_tokens(.SD, word, location_no_found)
-][!is.na(word)
-][!as.data.table(stop_words), on = "word"
-][word %chin% EnglishPossibleWords &
-    ! word %like% "\\d", 
-  .(word_count = uniqueN(id)),
-  by = c("response_accommodation","word")
-][, dcast(.SD, word ~ response_accommodation,
-          value.var = "word_count", fill = 0)
-][, c("% accommodation","% no accommodation") :=
-    lapply(.SD, \(x) (x+1)/sum(x+1)),
-  .SDcols = c("accommodation","no accommodation")
-][, log_ratio := log2(`% accommodation`/`% no accommodation`)
-][order(-log_ratio)]
+# 
+# ProtestCitiesCount[, .(id,
+#                        country, 
+#                        response_accommodation = fifelse(response_accommodation == 1,
+#                                                         "accommodation",
+#                                                         "no accommodation"),
+#                        location_no_found)
+# ][, unnest_tokens(.SD, word, location_no_found)
+# ][!is.na(word)
+# ][!as.data.table(stop_words), on = "word"
+# ][word %chin% EnglishPossibleWords &
+#     ! word %like% "\\d", 
+#   .(word_count = uniqueN(id)),
+#   by = c("response_accommodation","word")
+# ][, dcast(.SD, word ~ response_accommodation,
+#           value.var = "word_count", fill = 0)
+# ][, c("% accommodation","% no accommodation") :=
+#     lapply(.SD, \(x) (x+1)/sum(x+1)),
+#   .SDcols = c("accommodation","no accommodation")
+# ][, log_ratio := log2(`% accommodation`/`% no accommodation`)
+# ][order(-log_ratio)]
 
 ```
 
