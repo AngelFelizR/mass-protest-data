@@ -68,6 +68,7 @@ library(flextable)
 library(ggplot2)
 library(scales)
 library(forcats)
+library(ggcorrplot)
 
 library(tidytext)
 
@@ -778,10 +779,10 @@ ProtestReshaped <-
                              "demand","response"),
           actions = fifelse(actions == "accomodation",
                             "accommodation",actions),
-          action_occur = 1L)
+          action_occur = TRUE)
   ][, unique(.SD) 
   ][, dcast(.SD, id ~ variable + actions, 
-            value.var = "action_occur", fill = 0L)
+            value.var = "action_occur", fill = FALSE)
     
     
   # Adding the other variables to have back the data complete
@@ -792,8 +793,8 @@ ProtestReshaped <-
     .SDcols = !patterns("^(protesterdemand|stateresponse)")
   ][,{ 
     ColsToFill <- str_subset(names(.SD),"^(demand|response)")
-    copy(.SD)[is.na(response_shootings), (ColsToFill) := 0L] 
-  }]
+    copy(.SD)[is.na(response_shootings), (ColsToFill) := FALSE]
+  }][, protesterviolence := protesterviolence == 1]
 
 ```
 
@@ -957,11 +958,12 @@ ProtestLocationExtracted <-
                              by = c("id","country")]) |>
   rbindlist() |>
   unique() |>
-  merge(WorldCities[capital == "primary"],
+  merge(WorldCities,
         by = c("country","city_ascii"), all.x = TRUE) |>
   (\(DT) DT[, .(cities_found = .(city_ascii),
                 num_cities = .N,
-                in_capital = sum(!is.na(capital)) > 0),
+                in_capital = sum(capital == "primary",na.rm = TRUE) > 0,
+                total_population = sum(population, na.rm = TRUE)),
             by = "id"
          ][ProtestExactCityMatch[,!c("exact_cities_found",
                                      "num_cities",
@@ -977,31 +979,85 @@ ProtestLocationExtracted <-
 
 # Data exploration
 
+
+## What correlations we can see in the data?
+
 ```{r}
 
-# 
-# ProtestCitiesCount[, .(id,
-#                        country, 
-#                        response_accommodation = fifelse(response_accommodation == 1,
-#                                                         "accommodation",
-#                                                         "no accommodation"),
-#                        location_no_found)
-# ][, unnest_tokens(.SD, word, location_no_found)
-# ][!is.na(word)
-# ][!as.data.table(stop_words), on = "word"
-# ][word %chin% EnglishPossibleWords &
-#     ! word %like% "\\d", 
-#   .(word_count = uniqueN(id)),
-#   by = c("response_accommodation","word")
-# ][, dcast(.SD, word ~ response_accommodation,
-#           value.var = "word_count", fill = 0)
-# ][, c("% accommodation","% no accommodation") :=
-#     lapply(.SD, \(x) (x+1)/sum(x+1)),
-#   .SDcols = c("accommodation","no accommodation")
-# ][, log_ratio := log2(`% accommodation`/`% no accommodation`)
-# ][order(-log_ratio)]
+ProtestLocationExtracted[, cor(.SD), 
+                         .SDcols = is.logical] |>
+  ggcorrplot(hc.order = TRUE,
+             type = "upper",
+             outline.color = "white",
+             lab = TRUE)
 
 ```
+
+
+## Does the number of participants increase any state repose?
+
+```{r}
+
+melt.data.table(ProtestLocationExtracted[!is.na(participants_category)],
+                id.vars = c("id","participants_category"),
+                measure.vars = grep("^response",names(ProtestLocationExtracted),
+                                    value = TRUE),
+                value.name = "The event happen") |>
+  ggplot(aes(participants_category, fill = `The event happen`))+
+  geom_bar(position = position_fill(), alpha = 0.8)+
+  scale_fill_manual(values = c("TRUE" = "dodgerblue3",
+                               "FALSE" = "brown2"))+
+  facet_wrap(~variable)+
+  coord_flip()
+
+
+```
+
+
+```{r}
+melt.data.table(ProtestLocationExtracted,
+                id.vars = c("id","response_accommodation"),
+                measure.vars = c("polity","autoc","democ"),
+                value.name = "index_value") |>
+  ggplot(aes(response_accommodation, index_value))+
+  geom_boxplot(aes(fill = response_accommodation))+
+  facet_wrap(~variable)+
+  theme(legend.position = "none")
+```
+
+
+
+```{r}
+
+ggplot(ProtestLocationExtracted, aes(num_cities))+
+  geom_histogram(aes(fill = response_accommodation), binwidth = 2)+
+  facet_wrap(~response_accommodation, ncol = 1, scales = "free_y")
+
+```
+
+
+```{r}
+
+ggplot(ProtestLocationExtracted, aes(total_population))+
+  geom_histogram(aes(fill = response_accommodation))+
+  scale_x_log10()+
+  facet_wrap(~response_accommodation, ncol = 1, scales = "free_y")
+
+```
+
+
+```{r}
+
+ProtestLocationExtracted[, .(id,
+                             response_accommodation,
+                             duration = difftime(end_date,start_date, units = "days") |>
+                               as.double())] |>
+  ggplot(aes(response_accommodation, duration))+
+  geom_jitter(aes(color = response_accommodation), alpha = 0.3)+
+  coord_cartesian(ylim = c(0,20))
+
+```
+
 
 
 
