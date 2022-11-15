@@ -90,7 +90,10 @@ theme_light()+
         axis.title = element_text(size = 16, face = "bold"),
         strip.text = element_text(size = 16, face = "bold"),
         plot.title = element_text(size = 25, face = "bold", 
-                                  hjust = 0.5, margin = margin(b = 15)))
+                                  hjust = 0.5, margin = margin(b = 15)),
+        
+        legend.title = element_text(size = 15, face = "bold"),
+        legend.text = element_text(size = 14))
 
 theme_set(CustomTheme)
 rm(CustomTheme)
@@ -820,9 +823,7 @@ ProtestReshaped[, lapply(.SD, function(x) mean(is.na(x)))
 
 ```
 
-# Expanding current information
-
-## Adding policatical situation
+## Joining policatical situation
 
 As we already confirmed that the data is related to Center for Systemic Peace data adding the variables to the main data can be done in one line of code.
 
@@ -976,22 +977,66 @@ ProtestLocationExtracted <-
 
 ```
 
+## Final Result
+
+After applying many transformations to the data we are ready to explore it. The new data it is tidy format and we will easy to manipulate across the exploration process.
+
+```{r}
+
+pillar::glimpse(ProtestLocationExtracted)
+
+```
+
 
 # Data exploration
 
 
-## What correlations we can see in the data?
+## What correlation que can find between protestan demands and state respose?
+
 
 ```{r}
 
-ProtestLocationExtracted[, cor(.SD), 
-                         .SDcols = is.logical] |>
-  ggcorrplot(hc.order = TRUE,
-             type = "upper",
-             outline.color = "white",
-             lab = TRUE)
+ProtestLocationExtracted[, !c("id","ccode","democ","autoc")
+][, lapply(.SD, \(x) x * 1),
+  .SDcols = \(x) is.logical(x) | is.numeric(x)
+][, correlation::correlation(.SD) |> as.data.table()
+][p < 0.05
+][order(-abs(r)),
+    .(relation = fct_reorder(paste0(Parameter2," <-> ",Parameter1), abs(r)),
+      r = abs(r), 
+      CI_low = abs(CI_low), 
+      CI_high = abs(CI_high),
+      direction = fifelse(r >= 0, "Positive", "Negative") |>
+                  factor(levels = c("Positive", "Negative")))
+  ][, rbind(.SD[direction == "Positive"][1:10],
+            .SD[direction == "Negative"][1:10])] |>
+  ggplot(aes(r, relation, color = direction))+
+  geom_errorbar(aes(xmin = CI_low,xmax = CI_high),
+                width = 0.4, size = 1.2, alpha = 0.5)+
+  geom_point(size = 2.3) +
+  facet_wrap(~direction, scales = "free_y", ncol = 1)+
+  scale_x_continuous(labels = percent_format(accuracy = 1),
+                     breaks = breaks_width(0.10))+
+  expand_limits(x = 0)+
+  scale_color_manual(values = c("Positive" = "dodgerblue3",
+                                "Negative" = "brown2"))+
+  labs(title = "Most important correlations",
+       y = "", x = "Correlation", color = "Direction")+
+  theme(legend.position = "top")
 
 ```
+
+As we can see the state try to dispersal the crowd
+
+## How does political factor affects state reponse?
+
+
+```{r}
+
+
+
+```
+
 
 
 ## Does the number of participants increase any state repose?
@@ -1004,7 +1049,7 @@ melt.data.table(ProtestLocationExtracted[!is.na(participants_category)],
                                     value = TRUE),
                 value.name = "The event happen") |>
   ggplot(aes(participants_category, fill = `The event happen`))+
-  geom_bar(position = position_fill(), alpha = 0.8)+
+  geom_bar(position = position_fill(), alpha = 0.85)+
   scale_fill_manual(values = c("TRUE" = "dodgerblue3",
                                "FALSE" = "brown2"))+
   facet_wrap(~variable)+
