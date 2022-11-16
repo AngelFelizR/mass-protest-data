@@ -68,7 +68,8 @@ library(flextable)
 library(ggplot2)
 library(scales)
 library(forcats)
-library(ggcorrplot)
+library(igraph)
+library(ggraph)
 
 library(tidytext)
 
@@ -990,43 +991,33 @@ pillar::glimpse(ProtestLocationExtracted)
 
 # Data exploration
 
-
-## What correlation que can find between protestan demands and state respose?
-
+A we can see the data have some numeric and logical variable that can be converted to numeric. It would be really interesting if we can confirm which variables go down or go up together. To find out that we can use the `correlation` function from the **correlation** with also give us confident intervals to confirm that the correlation are statistician significance.
 
 ```{r}
 
-ProtestLocationExtracted[, !c("id","ccode","democ","autoc")
-][, lapply(.SD, \(x) x * 1),
-  .SDcols = \(x) is.logical(x) | is.numeric(x)
-][, correlation::correlation(.SD) |> as.data.table()
-][p < 0.05
-][order(-abs(r)),
-    .(relation = fct_reorder(paste0(Parameter2," <-> ",Parameter1), abs(r)),
-      r = abs(r), 
-      CI_low = abs(CI_low), 
-      CI_high = abs(CI_high),
-      direction = fifelse(r >= 0, "Positive", "Negative") |>
-                  factor(levels = c("Positive", "Negative")))
-  ][, rbind(.SD[direction == "Positive"][1:10],
-            .SD[direction == "Negative"][1:10])] |>
-  ggplot(aes(r, relation, color = direction))+
-  geom_errorbar(aes(xmin = CI_low,xmax = CI_high),
-                width = 0.4, size = 1.2, alpha = 0.5)+
-  geom_point(size = 2.3) +
-  facet_wrap(~direction, scales = "free_y", ncol = 1)+
-  scale_x_continuous(labels = percent_format(accuracy = 1),
-                     breaks = breaks_width(0.10))+
-  expand_limits(x = 0)+
-  scale_color_manual(values = c("Positive" = "dodgerblue3",
-                                "Negative" = "brown2"))+
-  labs(title = "Most important correlations",
-       y = "", x = "Correlation", color = "Direction")+
-  theme(legend.position = "top")
+CorSummary <-
+  ProtestLocationExtracted[, !c("id","ccode","democ","autoc", "durable","year")
+  ][, participants_category := as.integer(participants_category)
+  ][, lapply(.SD, \(x) x * 1),
+    .SDcols = \(x) is.logical(x) | is.numeric(x)
+  ][, correlation::correlation(.SD) |> as.data.table()
+  ][p < 0.05
+  ][order(-r)
+  ][1:40]
+
+# "nicely"  "with_fr" "with_graphopt" "with_kk" "with_lgl" "with_graphopt"
+set.seed(50) # 15
+graph_from_data_frame(CorSummary, directed = FALSE) |>
+  ggraph(layout = "with_kk")+
+  geom_edge_link(aes(edge_alpha = r), edge_width = 1,
+                 edge_color = "blue")+
+  geom_node_point(size = 3)+
+  geom_node_text(aes(label = name), repel = TRUE)+
+  labs(title = "What are the biggest correlations?")+
+  theme(legend.position = "top",
+        legend.title = element_blank())
 
 ```
-
-As we can see the state try to dispersal the crowd
 
 ## How does political factor affects state reponse?
 
