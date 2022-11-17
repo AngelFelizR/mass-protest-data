@@ -133,7 +133,7 @@ lower_clean_name <- function(text){
 
 ```{r}
 
-clean_amount <- \(x) str_remove_all(x,",") |> as.double()
+clean_amount <- \(x) gsub(",","",x) |> as.double()
 
 ```
 
@@ -299,11 +299,11 @@ Polity5 <-
   
   # According to the users’ manual polity 
   # values out of [-10,10] have a special meaning
-  )[, goverment_status := fcase(polity == -66, "Interruption",
+  )[, government_status := fcase(polity == -66, "Interruption",
                                 polity == -77, "Interregnum",
                                 polity == -88, "Transition",
                                 default = "Active")
-  ][goverment_status != "Active", 
+  ][government_status != "Active", 
     c("democ","autoc","polity") := NA_real_]
 
 
@@ -991,106 +991,128 @@ pillar::glimpse(ProtestLocationExtracted)
 
 # Data exploration
 
-A we can see the data have some numeric and logical variable that can be converted to numeric. It would be really interesting if we can confirm which variables go down or go up together. To find out that we can use the `correlation` function from the **correlation** with also give us confident intervals to confirm that the correlation are statistician significance.
+
+## Correlation network summary
+
+A we can see the data have some numeric and logical variables that can be converted to numeric. It would be really interesting if we can confirm which variables go in same or opposite directions. To find out that we can use the `correlation` function from the **correlation** which also give us confident intervals to confirm that the correlation are statistician significance.
+
+The first step it's to take out variables that don't bring big insights and case of finding any relation, then we select logical and numeric variables and calculate correlations.
 
 ```{r}
 
 CorSummary <-
-  ProtestLocationExtracted[, !c("id","ccode","democ","autoc", "durable","year")
+  ProtestLocationExtracted[, !c("id","ccode","democ","autoc", "durable")
   ][, participants_category := as.integer(participants_category)
   ][, lapply(.SD, \(x) x * 1),
-    .SDcols = \(x) is.logical(x) | is.numeric(x)
-  ][, correlation::correlation(.SD) |> as.data.table()
-  ][p < 0.05
-  ][order(-r)
-  ][1:40]
+    .SDcols = \(x) is.logical(x) | is.numeric(x)] |> 
+  correlation::correlation() |>
+  as.data.table()
 
-# "nicely"  "with_fr" "with_graphopt" "with_kk" "with_lgl" "with_graphopt"
-set.seed(50) # 15
-graph_from_data_frame(CorSummary, directed = FALSE) |>
-  ggraph(layout = "with_kk")+
-  geom_edge_link(aes(edge_alpha = r), edge_width = 1,
-                 edge_color = "blue")+
+CorSummary[1:6,
+           lapply(.SD, \(x) if(is.numeric(x)){round(x,2)}else{x})] |>
+  style_table()
+
+```
+
+
+
+```{r}
+
+set.seed(50) 
+CorSummary[p < 0.05 & r >= 0.10
+][, cor_category := cut(r,0:5*2/10)] |>
+graph_from_data_frame(directed = FALSE) |>
+  ggraph(layout = "with_graphopt")+
+  geom_edge_link(aes(edge_color = cor_category), 
+                 edge_width = 1)+
   geom_node_point(size = 3)+
   geom_node_text(aes(label = name), repel = TRUE)+
-  labs(title = "What are the biggest correlations?")+
+  scale_edge_color_brewer(palette = "PuBu")+
+  labs(title = "Positive significan correlations")+
   theme(legend.position = "top",
         legend.title = element_blank())
 
 ```
 
-## How does political factor affects state reponse?
+By checking the last report chart we can say:
+
+1. Violent state responses like beatings, arrests, crowd dispersal, shootings and killings are correlated with violence from the protester side.
+2. Removing politician is a reason that moves many people (`participants_category`) and most of the time takes place in the capital and other cities in the nation several times in a year (`protestnumber`) and happens usually in countries more democratic than autocratic (`polity`).
+3. Labor wage disputes have a national presence and usually take place in democratic (`polity`) countries.
+4. The most common response in democratic countries it's to ignore protests.
+
+Let's confirm those findings adding other charts to see with extra details of each relation.
 
 
-```{r}
-
-
-
-```
-
-
-
-## Does the number of participants increase any state repose?
-
-```{r}
-
-melt.data.table(ProtestLocationExtracted[!is.na(participants_category)],
-                id.vars = c("id","participants_category"),
-                measure.vars = grep("^response",names(ProtestLocationExtracted),
-                                    value = TRUE),
-                value.name = "The event happen") |>
-  ggplot(aes(participants_category, fill = `The event happen`))+
-  geom_bar(position = position_fill(), alpha = 0.85)+
-  scale_fill_manual(values = c("TRUE" = "dodgerblue3",
-                               "FALSE" = "brown2"))+
-  facet_wrap(~variable)+
-  coord_flip()
-
-
-```
-
+### Protester violence relations
 
 ```{r}
+
 melt.data.table(ProtestLocationExtracted,
-                id.vars = c("id","response_accommodation"),
-                measure.vars = c("polity","autoc","democ"),
-                value.name = "index_value") |>
-  ggplot(aes(response_accommodation, index_value))+
-  geom_boxplot(aes(fill = response_accommodation))+
-  facet_wrap(~variable)+
-  theme(legend.position = "none")
-```
-
-
-
-```{r}
-
-ggplot(ProtestLocationExtracted, aes(num_cities))+
-  geom_histogram(aes(fill = response_accommodation), binwidth = 2)+
-  facet_wrap(~response_accommodation, ncol = 1, scales = "free_y")
-
-```
-
-
-```{r}
-
-ggplot(ProtestLocationExtracted, aes(total_population))+
-  geom_histogram(aes(fill = response_accommodation))+
-  scale_x_log10()+
-  facet_wrap(~response_accommodation, ncol = 1, scales = "free_y")
+                id.vars = c("id","protesterviolence"),
+                measure.vars = str_subset(names(ProtestLocationExtracted),"response"),
+                variable.name = "response",
+                variable.factor = FALSE,
+                value.name = "response_happen"
+  )[response_happen == TRUE, 
+    .(number_protest = uniqueN(id)),
+    by = c("protesterviolence","response")
+  ][, violence_pct := number_protest[protesterviolence]/sum(number_protest),
+    by = "response"
+  ][, response := fct_reorder(response, violence_pct, unique)] |>
+  ggplot(aes(number_protest, response, fill = protesterviolence))+
+  geom_col(position = position_fill(), alpha = 0.85)+
+  geom_vline(aes(xintercept = 0.5), size = 0.75)+
+  scale_x_continuous(labels = percent_format(accuracy = 1))+
+  scale_fill_manual(values = c("TRUE" = "brown2",
+                               "FALSE" = "dodgerblue3"))+
+  labs(title = "Proportion of protester violence\nby response category",
+       y = "", x = "Proportion of protests (%)",
+       fill = "Protester Violence")+
+  theme(legend.position = "top")
 
 ```
 
+For example, when states response with killings the 75% percent of protests were violent.
+
+
+### Polity ingnore
 
 ```{r}
 
-ProtestLocationExtracted[, .(id,
-                             response_accommodation,
-                             duration = difftime(end_date,start_date, units = "days") |>
-                               as.double())] |>
-  ggplot(aes(response_accommodation, duration))+
-  geom_jitter(aes(color = response_accommodation), alpha = 0.3)+
-  coord_cartesian(ylim = c(0,20))
+ProtestLocationExtracted[!is.na(polity),
+                         melt(.SD, 
+                              measure.vars = str_subset(names(ProtestLocationExtracted),
+                                                        "demand"),
+                              variable.name = "demands",
+                              variable.factor = FALSE,
+                              value.name = "happen")
+][happen == TRUE,
+  .(accommodation_pct = mean(response_accommodation),
+    n = uniqueN(id)),
+  by = .(#participants_category,
+         demands = sub("demand_","",demands),
+         polity = fcase(polity < quantile(polity,0.25), "<Q1",
+                        polity < quantile(polity,0.50), "[Q1-Q2)",
+                        polity < quantile(polity,0.75), "[Q2-Q3)",
+                        polity >= quantile(polity,0.75),">=Q3") |>
+           factor(levels = c("<Q1", "[Q1-Q2)", "[Q2-Q3)",">=Q3")))] |>
+  ggplot(aes(polity, demands, fill = accommodation_pct ))+
+  geom_tile()+
+  geom_text(aes(label = accommodation_pct |> 
+                        percent(accuracy = 0.01) |>
+                        paste0(" | ", n),
+                size = 7),
+            fontface = "bold")+
+  scale_fill_gradient(low = "white", high = "red")+
+  theme_classic()+
+  theme(axis.text = element_text(size = 15),
+        axis.title = element_text(size = 16, face = "bold"),
+        strip.text = element_text(size = 16, face = "bold"),
+        plot.title = element_text(size = 25, face = "bold", 
+                                  hjust = 0.5, margin = margin(b = 15)),
+        legend.position = "none")
+
 
 ```
 
